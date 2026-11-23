@@ -1403,9 +1403,14 @@ static int NetDownloadUrl(const wchar_t* url,
         return 1;
     }
 
+    if (wcslen(url) > 2000) {
+        if (!silent) fwprintf(stderr, L"curl: URL too long\n");
+        return 1;
+    }
+
     wchar_t wurl[2048];
     if (wcsncmp(url, L"http://", 7) != 0 && wcsncmp(url, L"https://", 8) != 0) {
-        swprintf(wurl, _countof(wurl), L"http://%ls", url);
+        swprintf_s(wurl, _countof(wurl), L"http://%ls", url);
     } else {
         wcsncpy_s(wurl, _countof(wurl), url, _countof(wurl) - 1);
     }

@@ -4,42 +4,41 @@
 #include <ksh/builtins.h>
 #include <ksh/help.h>
 
-bool Builtin_Chcp(CommandAST* cmd, int* code) {
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
+static void SafeConcatArgs(wchar_t* dest, size_t dest_count, wchar_t* const* argv, int argc, int start_idx) {
+    dest[0] = L'\0';
+    for (int i = start_idx; i < argc; i++) {
+        if (!argv[i]) continue;
+        if (i > start_idx) {
+            wcsncat_s(dest, dest_count, L" ", _TRUNCATE);
+        }
+        wcsncat_s(dest, dest_count, argv[i], _TRUNCATE);
     }
+}
+
+bool Builtin_Chcp(CommandAST* cmd, int* code) {
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_ExecuteCodePage(rest);
     return true;
 }
 
 bool Builtin_Color(IShell* shell, CommandAST* cmd, int* code) {
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_ExecuteColor(shell, rest);
     return true;
 }
 
 bool Builtin_Title(CommandAST* cmd, int* code) {
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_ExecuteTitle(rest);
     return true;
 }
 
 bool Builtin_Vol(CommandAST* cmd, int* code) {
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_ExecuteVolume(rest);
     return true;
 }
@@ -1748,11 +1747,8 @@ bool Builtin_Copy(IShell* shell, CommandAST* cmd, int* code) {
         *code = 0;
         return true;
     }
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_CopyMove(shell, rest, false);
     return true;
 }
@@ -1763,11 +1759,8 @@ bool Builtin_Move(IShell* shell, CommandAST* cmd, int* code) {
         *code = 0;
         return true;
     }
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_CopyMove(shell, rest, true);
     return true;
 }
@@ -1778,11 +1771,8 @@ bool Builtin_Del(CommandAST* cmd, int* code) {
         *code = 0;
         return true;
     }
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_DeleteFiles(rest);
     return true;
 }

@@ -509,7 +509,7 @@ static bool TryExecuteAssignment(IShell* shell, CommandAST* cmd, int* out_code) 
                     }
                     wchar_t seg[136];
                     swprintf_s(seg, _countof(seg), L"[%ls]", resIdx);
-                    wcscat_s(resolvedKey, _countof(resolvedKey), seg);
+                    wcsncat_s(resolvedKey, _countof(resolvedKey), seg, _TRUNCATE);
                     p = cb + 1;
                 } else if (*p == L'.') {
                     const wchar_t* nextB = wcschr(p, L'[');
@@ -517,7 +517,7 @@ static bool TryExecuteAssignment(IShell* shell, CommandAST* cmd, int* out_code) 
                     wchar_t memStr[128];
                     if (memLen >= sizeof(memStr) / sizeof(memStr[0])) memLen = sizeof(memStr) / sizeof(memStr[0]) - 1;
                     wcsncpy_s(memStr, _countof(memStr), p, memLen);
-                    wcscat_s(resolvedKey, _countof(resolvedKey), memStr);
+                    wcsncat_s(resolvedKey, _countof(resolvedKey), memStr, _TRUNCATE);
                     p += memLen;
                 } else {
                     size_t curLen = wcslen(resolvedKey);

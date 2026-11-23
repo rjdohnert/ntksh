@@ -657,11 +657,19 @@ bool Builtin_Banner(CommandAST* cmd, int* code) {
         return true;
     }
 
-    wchar_t joined[512] = {0};
+    size_t total_len = 0;
+    for (int i = 1; i < cmd->argc; i++) total_len += wcslen(cmd->argv[i]) + 1;
+    wchar_t* joined = (wchar_t*)malloc((total_len + 1) * sizeof(wchar_t));
+    if (!joined) { *code = 1; return true; }
+    joined[0] = L'\0';
+    size_t cur = 0;
     for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(joined, _countof(joined), L" ");
-        wcscat_s(joined, _countof(joined), cmd->argv[i]);
+        if (i > 1) joined[cur++] = L' ';
+        size_t l = wcslen(cmd->argv[i]);
+        wmemcpy(joined + cur, cmd->argv[i], l);
+        cur += l;
     }
+    joined[cur] = L'\0';
 
     for (int row = 0; row < 7; row++) {
         for (size_t c = 0; joined[c]; c++) {
@@ -685,6 +693,7 @@ bool Builtin_Banner(CommandAST* cmd, int* code) {
         wprintf(L"\n");
     }
     wprintf(L"\n");
+    free(joined);
     *code = 0;
     return true;
 }

@@ -2381,8 +2381,8 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                 if (arr) {
                                     wchar_t keyList[MAX_LINE_LEN] = {0};
                                     for (ArrayElement* el = arr->elements; el; el = el->next) {
-                                        if (keyList[0]) wcscat_s(keyList, _countof(keyList), L" ");
-                                        wcscat_s(keyList, _countof(keyList), el->key);
+                                        if (keyList[0]) wcsncat_s(keyList, _countof(keyList), L" ", _TRUNCATE);
+                                        wcsncat_s(keyList, _countof(keyList), el->key, _TRUNCATE);
                                     }
                                     AppendSubstValue(esc, quote, &out, &out_cap, &j, keyList, wcslen(keyList));
                                 }
@@ -2417,8 +2417,8 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                         }
                                         if (!alreadySeen && seenCount < 64) {
                                             wcsncpy_s(seen[seenCount++], 64, memName, _TRUNCATE);
-                                            if (memberList[0]) wcscat_s(memberList, _countof(memberList), L" ");
-                                            wcscat_s(memberList, _countof(memberList), memName);
+                                            if (memberList[0]) wcsncat_s(memberList, _countof(memberList), L" ", _TRUNCATE);
+                                            wcsncat_s(memberList, _countof(memberList), memName, _TRUNCATE);
                                         }
                                     }
                                 }
@@ -2435,8 +2435,8 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                 wchar_t varList[MAX_LINE_LEN] = {0};
                                 for (EnvEntry* e = self->head; e; e = e->next) {
                                     if (_wcsnicmp(e->key, prefix, pfxLen) == 0 && !wcschr(e->key, L'.')) {
-                                        if (varList[0]) wcscat_s(varList, _countof(varList), L" ");
-                                        wcscat_s(varList, _countof(varList), e->key);
+                                        if (varList[0]) wcsncat_s(varList, _countof(varList), L" ", _TRUNCATE);
+                                        wcsncat_s(varList, _countof(varList), e->key, _TRUNCATE);
                                     }
                                 }
                                 AppendSubstValue(esc, quote, &out, &out_cap, &j, varList, wcslen(varList));
@@ -2513,7 +2513,7 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                 }
                                 wchar_t seg[136];
                                 swprintf_s(seg, _countof(seg), L"[%ls]", resIdx);
-                                wcscat_s(resolvedFullKey, _countof(resolvedFullKey), seg);
+                                wcsncat_s(resolvedFullKey, _countof(resolvedFullKey), seg, _TRUNCATE);
                                 p = cb + 1;
                             } else if (*p == L'.') {
                                 const wchar_t* nextB = wcschr(p, L'[');
@@ -2521,7 +2521,7 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                 wchar_t memStr[128];
                                 if (memLen >= sizeof(memStr) / sizeof(memStr[0])) memLen = sizeof(memStr) / sizeof(memStr[0]) - 1;
                                 wcsncpy_s(memStr, _countof(memStr), p, memLen);
-                                wcscat_s(resolvedFullKey, _countof(resolvedFullKey), memStr);
+                                wcsncat_s(resolvedFullKey, _countof(resolvedFullKey), memStr, _TRUNCATE);
                                 p += memLen;
                             } else {
                                 size_t curLen = wcslen(resolvedFullKey);
@@ -3083,12 +3083,16 @@ static wchar_t* HeredocExpandToTemp(IEnvironment* env, const wchar_t* path) {
         FILE* out = NULL;
         int u8len = WideCharToMultiByte(CP_UTF8, 0, expanded, -1, NULL, 0, NULL, NULL);
         char* u8 = u8len > 0 ? (char*)malloc((size_t)u8len) : NULL;
-        if (u8 && Ksh_CreateTempFile(L"khx", tempFile, MAX_PATH) &&
-            _wfopen_s(&out, tempFile, L"wb") == 0 && out) {
-            WideCharToMultiByte(CP_UTF8, 0, expanded, -1, u8, u8len, NULL, NULL);
-            fwrite(u8, 1, (size_t)u8len - 1, out);
-            fclose(out);
-            result = SafeStrDup(tempFile);
+        if (u8 && Ksh_CreateTempFile(L"khx", tempFile, MAX_PATH)) {
+            if (_wfopen_s(&out, tempFile, L"wb") == 0 && out) {
+                WideCharToMultiByte(CP_UTF8, 0, expanded, -1, u8, u8len, NULL, NULL);
+                fwrite(u8, 1, (size_t)u8len - 1, out);
+                fclose(out);
+                result = SafeStrDup(tempFile);
+                if (!result) _wremove(tempFile);
+            } else {
+                _wremove(tempFile);
+            }
         }
         free(u8);
     }
@@ -3402,17 +3406,30 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                             goto parse_error;
                         wchar_t tempPath[MAX_PATH], tempFile[MAX_PATH];
                         GetTempPathW(MAX_PATH, tempPath);
-                        GetTempFileNameW(tempPath, L"ksh", 0, tempFile);
+                        if (GetTempFileNameW(tempPath, L"ksh", 0, tempFile) == 0) goto parse_error;
                         FILE* tf = NULL;
+                        bool written = false;
                         if (_wfopen_s(&tf, tempFile, L"wb") == 0 && tf) {
                             char u8[MAX_LINE_LEN * 4];
                             int u8len = WideCharToMultiByte(CP_UTF8, 0, fbuf, -1, u8, sizeof(u8), NULL, NULL);
                             if (u8len > 1) fwrite(u8, 1, u8len - 1, tf);
                             fwrite("\n", 1, 1, tf);
                             fclose(tf);
-                            free(curr->in_redirect);
-                            curr->in_redirect = SafeStrDup(tempFile);
-                            curr->is_temp_in_redirect = true;
+                            written = true;
+                        }
+                        if (written) {
+                            wchar_t* dupTemp = SafeStrDup(tempFile);
+                            if (dupTemp) {
+                                free(curr->in_redirect);
+                                curr->in_redirect = dupTemp;
+                                curr->is_temp_in_redirect = true;
+                            } else {
+                                _wremove(tempFile);
+                                goto parse_error;
+                            }
+                        } else {
+                            _wremove(tempFile);
+                            goto parse_error;
                         }
                         i = filenamePosition - 1;
                         continue;
@@ -3424,13 +3441,26 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                             goto parse_error;
                         wchar_t tempPath[MAX_PATH], tempFile[MAX_PATH];
                         GetTempPathW(MAX_PATH, tempPath);
-                        GetTempFileNameW(tempPath, L"ksh", 0, tempFile);
+                        if (GetTempFileNameW(tempPath, L"ksh", 0, tempFile) == 0) goto parse_error;
                         FILE* tf = NULL;
+                        bool opened = false;
                         if (_wfopen_s(&tf, tempFile, L"w, ccs=UTF-8") == 0 && tf) {
                             fclose(tf);
-                            free(curr->in_redirect);
-                            curr->in_redirect = SafeStrDup(tempFile);
-                            curr->is_temp_in_redirect = true;
+                            opened = true;
+                        }
+                        if (opened) {
+                            wchar_t* dupTemp = SafeStrDup(tempFile);
+                            if (dupTemp) {
+                                free(curr->in_redirect);
+                                curr->in_redirect = dupTemp;
+                                curr->is_temp_in_redirect = true;
+                            } else {
+                                _wremove(tempFile);
+                                goto parse_error;
+                            }
+                        } else {
+                            _wremove(tempFile);
+                            goto parse_error;
                         }
                         i = filenamePosition - 1;
                         continue;
@@ -4045,7 +4075,7 @@ static bool TryExecuteAssignment(IShell* shell, CommandAST* cmd, int* out_code) 
                     }
                     wchar_t seg[136];
                     swprintf_s(seg, _countof(seg), L"[%ls]", resIdx);
-                    wcscat_s(resolvedKey, _countof(resolvedKey), seg);
+                    wcsncat_s(resolvedKey, _countof(resolvedKey), seg, _TRUNCATE);
                     p = cb + 1;
                 } else if (*p == L'.') {
                     const wchar_t* nextB = wcschr(p, L'[');
@@ -4053,7 +4083,7 @@ static bool TryExecuteAssignment(IShell* shell, CommandAST* cmd, int* out_code) 
                     wchar_t memStr[128];
                     if (memLen >= sizeof(memStr) / sizeof(memStr[0])) memLen = sizeof(memStr) / sizeof(memStr[0]) - 1;
                     wcsncpy_s(memStr, _countof(memStr), p, memLen);
-                    wcscat_s(resolvedKey, _countof(resolvedKey), memStr);
+                    wcsncat_s(resolvedKey, _countof(resolvedKey), memStr, _TRUNCATE);
                     p += memLen;
                 } else {
                     size_t curLen = wcslen(resolvedKey);
@@ -6686,6 +6716,10 @@ bool Module_LoadNative(const wchar_t* path, const wchar_t* alias_cmd, wchar_t* e
     wchar_t resolvedPath[MAX_PATH];
     DWORD pathLen = GetFullPathNameW(path, _countof(resolvedPath), resolvedPath, NULL);
     if (pathLen == 0 || pathLen >= _countof(resolvedPath)) {
+        if (wcslen(path) >= _countof(resolvedPath)) {
+            if (err_buf && err_cap) swprintf_s(err_buf, err_cap, L"module path too long");
+            return false;
+        }
         wcscpy_s(resolvedPath, _countof(resolvedPath), path);
     }
 
@@ -6722,6 +6756,11 @@ bool Module_LoadNative(const wchar_t* path, const wchar_t* alias_cmd, wchar_t* e
     }
 
     if (alias_cmd && alias_cmd[0] && !Module_IsDynamicBuiltin(alias_cmd)) {
+        if (wcslen(alias_cmd) > 64) {
+            if (err_buf && err_cap) swprintf_s(err_buf, err_cap, L"alias command name too long");
+            FreeLibrary(hMod);
+            return false;
+        }
         /* Classic ksh93 builtin -f fallback: look for b_<cmd>, ksh_builtin_<cmd>, Builtin_<cmd>, or <cmd> */
         char symName[128];
         sprintf_s(symName, sizeof(symName), "b_%ls", alias_cmd);
@@ -15701,20 +15740,35 @@ bool Builtin_Print(IShell* shell, CommandAST* cmd, int* code) {
             *code = 2;
             return true;
         }
-        wchar_t pBuf[MAX_LINE_LEN];
+        size_t pCap = 2;
+        for (int a = index; a < cmd->argc; ++a) pCap += wcslen(cmd->argv[a]) + 1;
+        wchar_t* pBuf = (wchar_t*)malloc(pCap * sizeof(wchar_t));
+        if (!pBuf) { *code = 1; return true; }
         pBuf[0] = L'\0';
+        size_t pLen = 0;
         for (int argument = index; argument < cmd->argc; ++argument) {
-            if (argument > index) wcscat_s(pBuf, _countof(pBuf), lineByLine ? L"\n" : L" ");
-            wcscat_s(pBuf, _countof(pBuf), cmd->argv[argument]);
+            if (argument > index) {
+                pBuf[pLen++] = lineByLine ? L'\n' : L' ';
+            }
+            size_t al = wcslen(cmd->argv[argument]);
+            wmemcpy(pBuf + pLen, cmd->argv[argument], al);
+            pLen += al;
         }
-        if (!noNewline) wcscat_s(pBuf, _countof(pBuf), L"\n");
-        char u8Buf[MAX_LINE_LEN * 4];
-        int u8len = WideCharToMultiByte(CP_UTF8, 0, pBuf, -1, u8Buf, sizeof(u8Buf), NULL, NULL);
-        if (u8len > 1) {
-            DWORD written = 0;
-            WriteFile(shell->coproc_in_write, u8Buf, (DWORD)(u8len - 1), &written, NULL);
-            FlushFileBuffers(shell->coproc_in_write);
+        if (!noNewline) pBuf[pLen++] = L'\n';
+        pBuf[pLen] = L'\0';
+
+        int u8len = WideCharToMultiByte(CP_UTF8, 0, pBuf, (int)pLen, NULL, 0, NULL, NULL);
+        if (u8len > 0) {
+            char* u8Buf = (char*)malloc(u8len);
+            if (u8Buf) {
+                WideCharToMultiByte(CP_UTF8, 0, pBuf, (int)pLen, u8Buf, u8len, NULL, NULL);
+                DWORD written = 0;
+                WriteFile(shell->coproc_in_write, u8Buf, (DWORD)u8len, &written, NULL);
+                FlushFileBuffers(shell->coproc_in_write);
+                free(u8Buf);
+            }
         }
+        free(pBuf);
         *code = 0;
         return true;
     }
@@ -16570,8 +16624,8 @@ bool Builtin_Typeset(IShell* shell, CommandAST* cmd, int* code) {
                         else mIdx++;
                         wchar_t body[MAX_LINE_LEN] = {0};
                         while (mIdx < cmd->argc && wcscmp(cmd->argv[mIdx], L"}") != 0 && wcscmp(cmd->argv[mIdx], L")") != 0) {
-                            if (body[0]) wcscat_s(body, _countof(body), L" ");
-                            wcscat_s(body, _countof(body), cmd->argv[mIdx++]);
+                            if (body[0]) wcsncat_s(body, _countof(body), L" ", _TRUNCATE);
+                            wcsncat_s(body, _countof(body), cmd->argv[mIdx++], _TRUNCATE);
                         }
                         ShellTypeMember* mem = (ShellTypeMember*)calloc(1, sizeof(ShellTypeMember));
                         if (mem) {
@@ -18789,42 +18843,41 @@ bool Builtin_Suspend(CommandAST* cmd, int* code) {
 /* ========================================================================= */
 
 
-bool Builtin_Chcp(CommandAST* cmd, int* code) {
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
+static void SafeConcatArgs(wchar_t* dest, size_t dest_count, wchar_t* const* argv, int argc, int start_idx) {
+    dest[0] = L'\0';
+    for (int i = start_idx; i < argc; i++) {
+        if (!argv[i]) continue;
+        if (i > start_idx) {
+            wcsncat_s(dest, dest_count, L" ", _TRUNCATE);
+        }
+        wcsncat_s(dest, dest_count, argv[i], _TRUNCATE);
     }
+}
+
+bool Builtin_Chcp(CommandAST* cmd, int* code) {
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_ExecuteCodePage(rest);
     return true;
 }
 
 bool Builtin_Color(IShell* shell, CommandAST* cmd, int* code) {
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_ExecuteColor(shell, rest);
     return true;
 }
 
 bool Builtin_Title(CommandAST* cmd, int* code) {
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_ExecuteTitle(rest);
     return true;
 }
 
 bool Builtin_Vol(CommandAST* cmd, int* code) {
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_ExecuteVolume(rest);
     return true;
 }
@@ -20533,11 +20586,8 @@ bool Builtin_Copy(IShell* shell, CommandAST* cmd, int* code) {
         *code = 0;
         return true;
     }
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_CopyMove(shell, rest, false);
     return true;
 }
@@ -20548,11 +20598,8 @@ bool Builtin_Move(IShell* shell, CommandAST* cmd, int* code) {
         *code = 0;
         return true;
     }
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_CopyMove(shell, rest, true);
     return true;
 }
@@ -20563,11 +20610,8 @@ bool Builtin_Del(CommandAST* cmd, int* code) {
         *code = 0;
         return true;
     }
-    wchar_t rest[MAX_LINE_LEN] = {0};
-    for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(rest, _countof(rest), L" ");
-        wcscat_s(rest, _countof(rest), cmd->argv[i]);
-    }
+    wchar_t rest[MAX_LINE_LEN];
+    SafeConcatArgs(rest, _countof(rest), cmd->argv, cmd->argc, 1);
     *code = Batch_DeleteFiles(rest);
     return true;
 }
@@ -23541,13 +23585,26 @@ bool Builtin_Yes(CommandAST* cmd, int* code) {
         return true;
     }
 
-    wchar_t msg[1024] = L"y";
+    const wchar_t* msg = L"y";
+    wchar_t* dyn_msg = NULL;
     if (cmd->argc > 1) {
-        msg[0] = L'\0';
-        for (int i = 1; i < cmd->argc; i++) {
-            if (i > 1) wcscat_s(msg, 1024, L" ");
-            wcscat_s(msg, 1024, cmd->argv[i]);
+        size_t total_len = 0;
+        for (int i = 1; i < cmd->argc; i++) total_len += wcslen(cmd->argv[i]) + 1;
+        dyn_msg = (wchar_t*)malloc((total_len + 1) * sizeof(wchar_t));
+        if (!dyn_msg) {
+            *code = 1;
+            return true;
         }
+        dyn_msg[0] = L'\0';
+        size_t cur = 0;
+        for (int i = 1; i < cmd->argc; i++) {
+            if (i > 1) dyn_msg[cur++] = L' ';
+            size_t l = wcslen(cmd->argv[i]);
+            wmemcpy(dyn_msg + cur, cmd->argv[i], l);
+            cur += l;
+        }
+        dyn_msg[cur] = L'\0';
+        msg = dyn_msg;
     }
 
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -23561,6 +23618,7 @@ bool Builtin_Yes(CommandAST* cmd, int* code) {
         if (is_pipe && count >= 20) break;
     }
 
+    free(dyn_msg);
     *code = 0;
     return true;
 }
@@ -34853,6 +34911,12 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
         wchar_t out_path[MAX_PATH];
         bool using_stdout = to_stdout || is_stdin;
         if (!using_stdout) {
+            if (wcslen(path) + 6 >= _countof(out_path)) {
+                free(in_data);
+                fwprintf(stderr, L"gzip: %ls: path too long\n", path);
+                ret = 1;
+                continue;
+            }
             wcscpy_s(out_path, _countof(out_path), path);
             if (is_decompress) {
                 size_t l = wcslen(out_path);
@@ -34882,11 +34946,21 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
                     if (pos + 2 <= in_len) {
                         int xlen = in_data[pos] | (in_data[pos + 1] << 8);
                         pos += 2 + xlen;
+                        if (pos > in_len) pos = in_len;
                     }
                 }
-                if (flg & 0x08) { while (pos < in_len && in_data[pos] != 0) pos++; pos++; }
-                if (flg & 0x10) { while (pos < in_len && in_data[pos] != 0) pos++; pos++; }
-                if (flg & 0x02) { pos += 2; }
+                if (flg & 0x08) {
+                    while (pos < in_len && in_data[pos] != 0) pos++;
+                    if (pos < in_len) pos++;
+                }
+                if (flg & 0x10) {
+                    while (pos < in_len && in_data[pos] != 0) pos++;
+                    if (pos < in_len) pos++;
+                }
+                if (flg & 0x02) {
+                    pos += 2;
+                    if (pos > in_len) pos = in_len;
+                }
 
                 /* Read DEFLATE stored / uncompressed blocks */
                 int bfinal = 0;
@@ -34898,6 +34972,7 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
                         if (pos + 4 > in_len) break;
                         unsigned short len = in_data[pos] | (in_data[pos + 1] << 8);
                         pos += 4;
+                        if (pos > in_len) break;
                         if (pos + len > in_len) len = (unsigned short)(in_len - pos);
                         if (using_stdout) {
                             for (unsigned short b = 0; b < len; b++) putwchar((wchar_t)in_data[pos + b]);
@@ -37162,9 +37237,14 @@ static int NetDownloadUrl(const wchar_t* url,
         return 1;
     }
 
+    if (wcslen(url) > 2000) {
+        if (!silent) fwprintf(stderr, L"curl: URL too long\n");
+        return 1;
+    }
+
     wchar_t wurl[2048];
     if (wcsncmp(url, L"http://", 7) != 0 && wcsncmp(url, L"https://", 8) != 0) {
-        swprintf(wurl, _countof(wurl), L"http://%ls", url);
+        swprintf_s(wurl, _countof(wurl), L"http://%ls", url);
     } else {
         wcsncpy_s(wurl, _countof(wurl), url, _countof(wurl) - 1);
     }
@@ -40893,27 +40973,10 @@ bool Builtin_Daemon(IShell* shell, CommandAST* cmd, int* code) {
         }
     }
 
-    size_t totalLen = 0;
-    for (int i = cmd_start; i < cmd->argc; i++) {
-        totalLen += wcslen(cmd->argv[i]) + 3;
-    }
-    if (totalLen >= 32768) {
-        fwprintf(stderr, L"daemon: command line too long\n");
-        *code = 1;
-        return true;
-    }
-
-    wchar_t* cmdline = (wchar_t*)calloc(totalLen + 1, sizeof(wchar_t));
+    wchar_t* cmdline = BuildWin32CommandLine(cmd->argv + cmd_start, cmd->argc - cmd_start);
     if (!cmdline) {
         *code = 1;
         return true;
-    }
-    for (int i = cmd_start; i < cmd->argc; i++) {
-        if (i > cmd_start) wcscat_s(cmdline, totalLen + 1, L" ");
-        bool has_sp = (wcschr(cmd->argv[i], L' ') != NULL);
-        if (has_sp) wcscat_s(cmdline, totalLen + 1, L"\"");
-        wcscat_s(cmdline, totalLen + 1, cmd->argv[i]);
-        if (has_sp) wcscat_s(cmdline, totalLen + 1, L"\"");
     }
 
     HANDLE hOut = INVALID_HANDLE_VALUE;
@@ -41568,26 +41631,12 @@ bool Builtin_Script(IShell* shell, CommandAST* cmd, int* code) {
 
     wchar_t* cmdline = NULL;
     if (cmd_start != -1) {
-        size_t totalLen = 0;
-        for (int i = cmd_start; i < cmd->argc; i++) {
-            totalLen += wcslen(cmd->argv[i]) + 3;
-        }
-        cmdline = (wchar_t*)calloc(totalLen + 1, sizeof(wchar_t));
-        if (cmdline) {
-            for (int i = cmd_start; i < cmd->argc; i++) {
-                if (i > cmd_start) wcscat_s(cmdline, totalLen + 1, L" ");
-                bool has_sp = (wcschr(cmd->argv[i], L' ') != NULL);
-                if (has_sp) wcscat_s(cmdline, totalLen + 1, L"\"");
-                wcscat_s(cmdline, totalLen + 1, cmd->argv[i]);
-                if (has_sp) wcscat_s(cmdline, totalLen + 1, L"\"");
-            }
-        }
+        cmdline = BuildWin32CommandLine(cmd->argv + cmd_start, cmd->argc - cmd_start);
     } else {
         wchar_t selfExe[MAX_PATH];
         GetModuleFileNameW(NULL, selfExe, MAX_PATH);
-        size_t slen = wcslen(selfExe) + 4;
-        cmdline = (wchar_t*)calloc(slen, sizeof(wchar_t));
-        if (cmdline) swprintf_s(cmdline, slen, L"\"%ls\"", selfExe);
+        wchar_t* childArgv[1] = { selfExe };
+        cmdline = BuildWin32CommandLine(childArgv, 1);
     }
     if (!cmdline) {
         fclose(fpLog);
@@ -42771,11 +42820,19 @@ bool Builtin_Banner(CommandAST* cmd, int* code) {
         return true;
     }
 
-    wchar_t joined[512] = {0};
+    size_t total_len = 0;
+    for (int i = 1; i < cmd->argc; i++) total_len += wcslen(cmd->argv[i]) + 1;
+    wchar_t* joined = (wchar_t*)malloc((total_len + 1) * sizeof(wchar_t));
+    if (!joined) { *code = 1; return true; }
+    joined[0] = L'\0';
+    size_t cur = 0;
     for (int i = 1; i < cmd->argc; i++) {
-        if (i > 1) wcscat_s(joined, _countof(joined), L" ");
-        wcscat_s(joined, _countof(joined), cmd->argv[i]);
+        if (i > 1) joined[cur++] = L' ';
+        size_t l = wcslen(cmd->argv[i]);
+        wmemcpy(joined + cur, cmd->argv[i], l);
+        cur += l;
     }
+    joined[cur] = L'\0';
 
     for (int row = 0; row < 7; row++) {
         for (size_t c = 0; joined[c]; c++) {
@@ -42799,6 +42856,7 @@ bool Builtin_Banner(CommandAST* cmd, int* code) {
         wprintf(L"\n");
     }
     wprintf(L"\n");
+    free(joined);
     *code = 0;
     return true;
 }
@@ -43211,8 +43269,8 @@ bool Builtin_Whois(CommandAST* cmd, int* code) {
     }
     freeaddrinfo(res);
 
-    char queryA[256];
-    wcstombs_s(&conv, queryA, sizeof(queryA), query, _TRUNCATE);
+    char queryA[512];
+    wcstombs_s(&conv, queryA, sizeof(queryA) - 2, query, _TRUNCATE);
     strcat_s(queryA, sizeof(queryA), "\r\n");
 
     send(s, queryA, (int)strlen(queryA), 0);

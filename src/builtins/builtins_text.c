@@ -728,13 +728,26 @@ bool Builtin_Yes(CommandAST* cmd, int* code) {
         return true;
     }
 
-    wchar_t msg[1024] = L"y";
+    const wchar_t* msg = L"y";
+    wchar_t* dyn_msg = NULL;
     if (cmd->argc > 1) {
-        msg[0] = L'\0';
-        for (int i = 1; i < cmd->argc; i++) {
-            if (i > 1) wcscat_s(msg, 1024, L" ");
-            wcscat_s(msg, 1024, cmd->argv[i]);
+        size_t total_len = 0;
+        for (int i = 1; i < cmd->argc; i++) total_len += wcslen(cmd->argv[i]) + 1;
+        dyn_msg = (wchar_t*)malloc((total_len + 1) * sizeof(wchar_t));
+        if (!dyn_msg) {
+            *code = 1;
+            return true;
         }
+        dyn_msg[0] = L'\0';
+        size_t cur = 0;
+        for (int i = 1; i < cmd->argc; i++) {
+            if (i > 1) dyn_msg[cur++] = L' ';
+            size_t l = wcslen(cmd->argv[i]);
+            wmemcpy(dyn_msg + cur, cmd->argv[i], l);
+            cur += l;
+        }
+        dyn_msg[cur] = L'\0';
+        msg = dyn_msg;
     }
 
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -748,6 +761,7 @@ bool Builtin_Yes(CommandAST* cmd, int* code) {
         if (is_pipe && count >= 20) break;
     }
 
+    free(dyn_msg);
     *code = 0;
     return true;
 }

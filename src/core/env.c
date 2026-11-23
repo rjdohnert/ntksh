@@ -977,8 +977,8 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                 if (arr) {
                                     wchar_t keyList[MAX_LINE_LEN] = {0};
                                     for (ArrayElement* el = arr->elements; el; el = el->next) {
-                                        if (keyList[0]) wcscat_s(keyList, _countof(keyList), L" ");
-                                        wcscat_s(keyList, _countof(keyList), el->key);
+                                        if (keyList[0]) wcsncat_s(keyList, _countof(keyList), L" ", _TRUNCATE);
+                                        wcsncat_s(keyList, _countof(keyList), el->key, _TRUNCATE);
                                     }
                                     AppendSubstValue(esc, quote, &out, &out_cap, &j, keyList, wcslen(keyList));
                                 }
@@ -1013,8 +1013,8 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                         }
                                         if (!alreadySeen && seenCount < 64) {
                                             wcsncpy_s(seen[seenCount++], 64, memName, _TRUNCATE);
-                                            if (memberList[0]) wcscat_s(memberList, _countof(memberList), L" ");
-                                            wcscat_s(memberList, _countof(memberList), memName);
+                                            if (memberList[0]) wcsncat_s(memberList, _countof(memberList), L" ", _TRUNCATE);
+                                            wcsncat_s(memberList, _countof(memberList), memName, _TRUNCATE);
                                         }
                                     }
                                 }
@@ -1031,8 +1031,8 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                 wchar_t varList[MAX_LINE_LEN] = {0};
                                 for (EnvEntry* e = self->head; e; e = e->next) {
                                     if (_wcsnicmp(e->key, prefix, pfxLen) == 0 && !wcschr(e->key, L'.')) {
-                                        if (varList[0]) wcscat_s(varList, _countof(varList), L" ");
-                                        wcscat_s(varList, _countof(varList), e->key);
+                                        if (varList[0]) wcsncat_s(varList, _countof(varList), L" ", _TRUNCATE);
+                                        wcsncat_s(varList, _countof(varList), e->key, _TRUNCATE);
                                     }
                                 }
                                 AppendSubstValue(esc, quote, &out, &out_cap, &j, varList, wcslen(varList));
@@ -1109,7 +1109,7 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                 }
                                 wchar_t seg[136];
                                 swprintf_s(seg, _countof(seg), L"[%ls]", resIdx);
-                                wcscat_s(resolvedFullKey, _countof(resolvedFullKey), seg);
+                                wcsncat_s(resolvedFullKey, _countof(resolvedFullKey), seg, _TRUNCATE);
                                 p = cb + 1;
                             } else if (*p == L'.') {
                                 const wchar_t* nextB = wcschr(p, L'[');
@@ -1117,7 +1117,7 @@ static wchar_t* Env_Expand(IEnvironment* self, const wchar_t* input) {
                                 wchar_t memStr[128];
                                 if (memLen >= sizeof(memStr) / sizeof(memStr[0])) memLen = sizeof(memStr) / sizeof(memStr[0]) - 1;
                                 wcsncpy_s(memStr, _countof(memStr), p, memLen);
-                                wcscat_s(resolvedFullKey, _countof(resolvedFullKey), memStr);
+                                wcsncat_s(resolvedFullKey, _countof(resolvedFullKey), memStr, _TRUNCATE);
                                 p += memLen;
                             } else {
                                 size_t curLen = wcslen(resolvedFullKey);

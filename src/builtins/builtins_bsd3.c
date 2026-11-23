@@ -918,27 +918,10 @@ bool Builtin_Daemon(IShell* shell, CommandAST* cmd, int* code) {
         }
     }
 
-    size_t totalLen = 0;
-    for (int i = cmd_start; i < cmd->argc; i++) {
-        totalLen += wcslen(cmd->argv[i]) + 3;
-    }
-    if (totalLen >= 32768) {
-        fwprintf(stderr, L"daemon: command line too long\n");
-        *code = 1;
-        return true;
-    }
-
-    wchar_t* cmdline = (wchar_t*)calloc(totalLen + 1, sizeof(wchar_t));
+    wchar_t* cmdline = BuildWin32CommandLine(cmd->argv + cmd_start, cmd->argc - cmd_start);
     if (!cmdline) {
         *code = 1;
         return true;
-    }
-    for (int i = cmd_start; i < cmd->argc; i++) {
-        if (i > cmd_start) wcscat_s(cmdline, totalLen + 1, L" ");
-        bool has_sp = (wcschr(cmd->argv[i], L' ') != NULL);
-        if (has_sp) wcscat_s(cmdline, totalLen + 1, L"\"");
-        wcscat_s(cmdline, totalLen + 1, cmd->argv[i]);
-        if (has_sp) wcscat_s(cmdline, totalLen + 1, L"\"");
     }
 
     HANDLE hOut = INVALID_HANDLE_VALUE;

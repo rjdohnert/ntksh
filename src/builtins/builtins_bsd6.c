@@ -403,8 +403,8 @@ bool Builtin_Whois(CommandAST* cmd, int* code) {
     }
     freeaddrinfo(res);
 
-    char queryA[256];
-    wcstombs_s(&conv, queryA, sizeof(queryA), query, _TRUNCATE);
+    char queryA[512];
+    wcstombs_s(&conv, queryA, sizeof(queryA) - 2, query, _TRUNCATE);
     strcat_s(queryA, sizeof(queryA), "\r\n");
 
     send(s, queryA, (int)strlen(queryA), 0);

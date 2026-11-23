@@ -225,6 +225,10 @@ bool Module_LoadNative(const wchar_t* path, const wchar_t* alias_cmd, wchar_t* e
     wchar_t resolvedPath[MAX_PATH];
     DWORD pathLen = GetFullPathNameW(path, _countof(resolvedPath), resolvedPath, NULL);
     if (pathLen == 0 || pathLen >= _countof(resolvedPath)) {
+        if (wcslen(path) >= _countof(resolvedPath)) {
+            if (err_buf && err_cap) swprintf_s(err_buf, err_cap, L"module path too long");
+            return false;
+        }
         wcscpy_s(resolvedPath, _countof(resolvedPath), path);
     }
 
@@ -261,6 +265,11 @@ bool Module_LoadNative(const wchar_t* path, const wchar_t* alias_cmd, wchar_t* e
     }
 
     if (alias_cmd && alias_cmd[0] && !Module_IsDynamicBuiltin(alias_cmd)) {
+        if (wcslen(alias_cmd) > 64) {
+            if (err_buf && err_cap) swprintf_s(err_buf, err_cap, L"alias command name too long");
+            FreeLibrary(hMod);
+            return false;
+        }
         /* Classic ksh93 builtin -f fallback: look for b_<cmd>, ksh_builtin_<cmd>, Builtin_<cmd>, or <cmd> */
         char symName[128];
         sprintf_s(symName, sizeof(symName), "b_%ls", alias_cmd);

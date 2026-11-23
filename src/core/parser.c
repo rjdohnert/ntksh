@@ -164,12 +164,16 @@ static wchar_t* HeredocExpandToTemp(IEnvironment* env, const wchar_t* path) {
         FILE* out = NULL;
         int u8len = WideCharToMultiByte(CP_UTF8, 0, expanded, -1, NULL, 0, NULL, NULL);
         char* u8 = u8len > 0 ? (char*)malloc((size_t)u8len) : NULL;
-        if (u8 && Ksh_CreateTempFile(L"khx", tempFile, MAX_PATH) &&
-            _wfopen_s(&out, tempFile, L"wb") == 0 && out) {
-            WideCharToMultiByte(CP_UTF8, 0, expanded, -1, u8, u8len, NULL, NULL);
-            fwrite(u8, 1, (size_t)u8len - 1, out);
-            fclose(out);
-            result = SafeStrDup(tempFile);
+        if (u8 && Ksh_CreateTempFile(L"khx", tempFile, MAX_PATH)) {
+            if (_wfopen_s(&out, tempFile, L"wb") == 0 && out) {
+                WideCharToMultiByte(CP_UTF8, 0, expanded, -1, u8, u8len, NULL, NULL);
+                fwrite(u8, 1, (size_t)u8len - 1, out);
+                fclose(out);
+                result = SafeStrDup(tempFile);
+                if (!result) _wremove(tempFile);
+            } else {
+                _wremove(tempFile);
+            }
         }
         free(u8);
     }
@@ -483,17 +487,30 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                             goto parse_error;
                         wchar_t tempPath[MAX_PATH], tempFile[MAX_PATH];
                         GetTempPathW(MAX_PATH, tempPath);
-                        GetTempFileNameW(tempPath, L"ksh", 0, tempFile);
+                        if (GetTempFileNameW(tempPath, L"ksh", 0, tempFile) == 0) goto parse_error;
                         FILE* tf = NULL;
+                        bool written = false;
                         if (_wfopen_s(&tf, tempFile, L"wb") == 0 && tf) {
                             char u8[MAX_LINE_LEN * 4];
                             int u8len = WideCharToMultiByte(CP_UTF8, 0, fbuf, -1, u8, sizeof(u8), NULL, NULL);
                             if (u8len > 1) fwrite(u8, 1, u8len - 1, tf);
                             fwrite("\n", 1, 1, tf);
                             fclose(tf);
-                            free(curr->in_redirect);
-                            curr->in_redirect = SafeStrDup(tempFile);
-                            curr->is_temp_in_redirect = true;
+                            written = true;
+                        }
+                        if (written) {
+                            wchar_t* dupTemp = SafeStrDup(tempFile);
+                            if (dupTemp) {
+                                free(curr->in_redirect);
+                                curr->in_redirect = dupTemp;
+                                curr->is_temp_in_redirect = true;
+                            } else {
+                                _wremove(tempFile);
+                                goto parse_error;
+                            }
+                        } else {
+                            _wremove(tempFile);
+                            goto parse_error;
                         }
                         i = filenamePosition - 1;
                         continue;
@@ -505,13 +522,26 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                             goto parse_error;
                         wchar_t tempPath[MAX_PATH], tempFile[MAX_PATH];
                         GetTempPathW(MAX_PATH, tempPath);
-                        GetTempFileNameW(tempPath, L"ksh", 0, tempFile);
+                        if (GetTempFileNameW(tempPath, L"ksh", 0, tempFile) == 0) goto parse_error;
                         FILE* tf = NULL;
+                        bool opened = false;
                         if (_wfopen_s(&tf, tempFile, L"w, ccs=UTF-8") == 0 && tf) {
                             fclose(tf);
-                            free(curr->in_redirect);
-                            curr->in_redirect = SafeStrDup(tempFile);
-                            curr->is_temp_in_redirect = true;
+                            opened = true;
+                        }
+                        if (opened) {
+                            wchar_t* dupTemp = SafeStrDup(tempFile);
+                            if (dupTemp) {
+                                free(curr->in_redirect);
+                                curr->in_redirect = dupTemp;
+                                curr->is_temp_in_redirect = true;
+                            } else {
+                                _wremove(tempFile);
+                                goto parse_error;
+                            }
+                        } else {
+                            _wremove(tempFile);
+                            goto parse_error;
                         }
                         i = filenamePosition - 1;
                         continue;

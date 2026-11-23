@@ -977,20 +977,35 @@ bool Builtin_Print(IShell* shell, CommandAST* cmd, int* code) {
             *code = 2;
             return true;
         }
-        wchar_t pBuf[MAX_LINE_LEN];
+        size_t pCap = 2;
+        for (int a = index; a < cmd->argc; ++a) pCap += wcslen(cmd->argv[a]) + 1;
+        wchar_t* pBuf = (wchar_t*)malloc(pCap * sizeof(wchar_t));
+        if (!pBuf) { *code = 1; return true; }
         pBuf[0] = L'\0';
+        size_t pLen = 0;
         for (int argument = index; argument < cmd->argc; ++argument) {
-            if (argument > index) wcscat_s(pBuf, _countof(pBuf), lineByLine ? L"\n" : L" ");
-            wcscat_s(pBuf, _countof(pBuf), cmd->argv[argument]);
+            if (argument > index) {
+                pBuf[pLen++] = lineByLine ? L'\n' : L' ';
+            }
+            size_t al = wcslen(cmd->argv[argument]);
+            wmemcpy(pBuf + pLen, cmd->argv[argument], al);
+            pLen += al;
         }
-        if (!noNewline) wcscat_s(pBuf, _countof(pBuf), L"\n");
-        char u8Buf[MAX_LINE_LEN * 4];
-        int u8len = WideCharToMultiByte(CP_UTF8, 0, pBuf, -1, u8Buf, sizeof(u8Buf), NULL, NULL);
-        if (u8len > 1) {
-            DWORD written = 0;
-            WriteFile(shell->coproc_in_write, u8Buf, (DWORD)(u8len - 1), &written, NULL);
-            FlushFileBuffers(shell->coproc_in_write);
+        if (!noNewline) pBuf[pLen++] = L'\n';
+        pBuf[pLen] = L'\0';
+
+        int u8len = WideCharToMultiByte(CP_UTF8, 0, pBuf, (int)pLen, NULL, 0, NULL, NULL);
+        if (u8len > 0) {
+            char* u8Buf = (char*)malloc(u8len);
+            if (u8Buf) {
+                WideCharToMultiByte(CP_UTF8, 0, pBuf, (int)pLen, u8Buf, u8len, NULL, NULL);
+                DWORD written = 0;
+                WriteFile(shell->coproc_in_write, u8Buf, (DWORD)u8len, &written, NULL);
+                FlushFileBuffers(shell->coproc_in_write);
+                free(u8Buf);
+            }
         }
+        free(pBuf);
         *code = 0;
         return true;
     }
@@ -1846,8 +1861,8 @@ bool Builtin_Typeset(IShell* shell, CommandAST* cmd, int* code) {
                         else mIdx++;
                         wchar_t body[MAX_LINE_LEN] = {0};
                         while (mIdx < cmd->argc && wcscmp(cmd->argv[mIdx], L"}") != 0 && wcscmp(cmd->argv[mIdx], L")") != 0) {
-                            if (body[0]) wcscat_s(body, _countof(body), L" ");
-                            wcscat_s(body, _countof(body), cmd->argv[mIdx++]);
+                            if (body[0]) wcsncat_s(body, _countof(body), L" ", _TRUNCATE);
+                            wcsncat_s(body, _countof(body), cmd->argv[mIdx++], _TRUNCATE);
                         }
                         ShellTypeMember* mem = (ShellTypeMember*)calloc(1, sizeof(ShellTypeMember));
                         if (mem) {

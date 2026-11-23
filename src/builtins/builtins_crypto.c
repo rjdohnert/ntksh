@@ -917,6 +917,12 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
         wchar_t out_path[MAX_PATH];
         bool using_stdout = to_stdout || is_stdin;
         if (!using_stdout) {
+            if (wcslen(path) + 6 >= _countof(out_path)) {
+                free(in_data);
+                fwprintf(stderr, L"gzip: %ls: path too long\n", path);
+                ret = 1;
+                continue;
+            }
             wcscpy_s(out_path, _countof(out_path), path);
             if (is_decompress) {
                 size_t l = wcslen(out_path);
@@ -946,11 +952,21 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
                     if (pos + 2 <= in_len) {
                         int xlen = in_data[pos] | (in_data[pos + 1] << 8);
                         pos += 2 + xlen;
+                        if (pos > in_len) pos = in_len;
                     }
                 }
-                if (flg & 0x08) { while (pos < in_len && in_data[pos] != 0) pos++; pos++; }
-                if (flg & 0x10) { while (pos < in_len && in_data[pos] != 0) pos++; pos++; }
-                if (flg & 0x02) { pos += 2; }
+                if (flg & 0x08) {
+                    while (pos < in_len && in_data[pos] != 0) pos++;
+                    if (pos < in_len) pos++;
+                }
+                if (flg & 0x10) {
+                    while (pos < in_len && in_data[pos] != 0) pos++;
+                    if (pos < in_len) pos++;
+                }
+                if (flg & 0x02) {
+                    pos += 2;
+                    if (pos > in_len) pos = in_len;
+                }
 
                 /* Read DEFLATE stored / uncompressed blocks */
                 int bfinal = 0;
@@ -962,6 +978,7 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
                         if (pos + 4 > in_len) break;
                         unsigned short len = in_data[pos] | (in_data[pos + 1] << 8);
                         pos += 4;
+                        if (pos > in_len) break;
                         if (pos + len > in_len) len = (unsigned short)(in_len - pos);
                         if (using_stdout) {
                             for (unsigned short b = 0; b < len; b++) putwchar((wchar_t)in_data[pos + b]);
