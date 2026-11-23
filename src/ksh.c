@@ -6495,7 +6495,7 @@ static bool Shell_ReadLineInteractive(IShell* self, wchar_t* line, size_t maxLen
                 continue;
             }
             if (c == 21) { /* Ctrl+U: Kill line to cursor */
-                wcsncpy_s(s_kill_ring, MAX_LINE_LEN, line, cursor);
+                wcsncpy_s(s_kill_ring, _countof(s_kill_ring), line, cursor < _countof(s_kill_ring) ? cursor : _TRUNCATE);
                 size_t old_length = length;
                 memmove(line, line + cursor, (length - cursor + 1) * sizeof(wchar_t));
                 length -= cursor;
@@ -6524,7 +6524,7 @@ static bool Shell_ReadLineInteractive(IShell* self, wchar_t* line, size_t maxLen
                     size_t npos = ViWordBackward(line, cursor);
                     size_t del_cnt = cursor - npos;
                     size_t old_length = length;
-                    wcsncpy_s(s_kill_ring, MAX_LINE_LEN, line + npos, del_cnt);
+                    wcsncpy_s(s_kill_ring, _countof(s_kill_ring), line + npos, del_cnt < _countof(s_kill_ring) ? del_cnt : _TRUNCATE);
                     cursor = npos;
                     memmove(&line[cursor], &line[cursor + del_cnt], (length - (cursor + del_cnt) + 1) * sizeof(wchar_t));
                     length -= del_cnt;
@@ -25303,6 +25303,9 @@ typedef struct RxParser {
     const wchar_t* err;
 } RxParser;
 
+static RxNode* RxNewNode(int type);
+static void RxFreeNode(RxNode* n);
+
 static RxNode* RxNewNode(int type) {
     RxNode* n = (RxNode*)calloc(1, sizeof(RxNode));
     if (n) {
@@ -25317,7 +25320,10 @@ static void RxSeqPush(RxSeq* s, RxNode* n) {
     if (s->count == s->cap) {
         int ncap = s->cap ? s->cap * 2 : 4;
         RxNode** items = (RxNode**)realloc(s->items, sizeof(RxNode*) * ncap);
-        if (!items) return;
+        if (!items) {
+            RxFreeNode(n);
+            return;
+        }
         s->items = items;
         s->cap = ncap;
     }
@@ -27300,7 +27306,7 @@ static int SedExec(SedState* st, SedInput* in) {
                 break;
             case L'=': {
                 wchar_t buf[32];
-                swprintf(buf, 32, L"%lu\n", (unsigned long)st->line_no);
+                swprintf_s(buf, _countof(buf), L"%lu\n", (unsigned long)st->line_no);
                 SedPutChars(st, st->out, buf, wcslen(buf));
                 break;
             }
@@ -27942,7 +27948,7 @@ static bool SedParseOne(SedParser* p) {
             return SedError(p, L"e command is not supported");
         default: {
             wchar_t msg[64];
-            swprintf(msg, 64, L"unknown command: '%lc'", cmd);
+            swprintf_s(msg, _countof(msg), L"unknown command: '%lc'", cmd);
             return SedError(p, msg);
         }
     }
@@ -28149,7 +28155,7 @@ static void SedBackupName(const wchar_t* name, const wchar_t* suffix, wchar_t* o
     size_t base_len = wcslen(name + base_start);
     size_t o = 0;
     if (!wcschr(suffix, L'*')) {
-        o = swprintf(out, cap, L"%ls%ls", name, suffix) < 0 ? 0 : wcslen(out);
+        o = (swprintf_s(out, cap, L"%ls%ls", name, suffix) < 0) ? 0 : wcslen(out);
         return;
     }
     if (dir_len >= cap) dir_len = 0;
@@ -29984,7 +29990,9 @@ static void AwkParseFunction(AwkCtx* c) {
             }
             if (fn->nparams == pcap) {
                 pcap *= 2;
-                fn->params = (wchar_t**)realloc(fn->params, pcap * sizeof(wchar_t*));
+                wchar_t** new_params = (wchar_t**)realloc(fn->params, pcap * sizeof(wchar_t*));
+                if (!new_params) AwkFatal(c, L"out of memory");
+                fn->params = new_params;
             }
             fn->params[fn->nparams++] = c->cur.text;
             AwkLexNext(c, false);
@@ -30245,7 +30253,9 @@ static void AwkEnsureFields(AwkCtx* c) {
             AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + start, i - start));
             if (c->nf == c->capf) {
                 size_t nc = c->capf ? c->capf * 2 : 16;
-                c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                if (!new_fields) AwkFatal(c, L"out of memory");
+                c->fields = new_fields;
                 c->capf = nc;
             }
             c->fields[c->nf++] = fv;
@@ -30258,7 +30268,9 @@ static void AwkEnsureFields(AwkCtx* c) {
                 AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + start, i - start));
                 if (c->nf == c->capf) {
                     size_t nc = c->capf ? c->capf * 2 : 16;
-                    c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    if (!new_fields) AwkFatal(c, L"out of memory");
+                    c->fields = new_fields;
                     c->capf = nc;
                 }
                 c->fields[c->nf++] = fv;
@@ -30274,7 +30286,9 @@ static void AwkEnsureFields(AwkCtx* c) {
                 AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + from, m.s[0] - from));
                 if (c->nf == c->capf) {
                     size_t nc = c->capf ? c->capf * 2 : 16;
-                    c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    if (!new_fields) AwkFatal(c, L"out of memory");
+                    c->fields = new_fields;
                     c->capf = nc;
                 }
                 c->fields[c->nf++] = fv;
@@ -30283,7 +30297,9 @@ static void AwkEnsureFields(AwkCtx* c) {
                 AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + from, tlen - from));
                 if (c->nf == c->capf) {
                     size_t nc = c->capf ? c->capf * 2 : 16;
-                    c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    if (!new_fields) AwkFatal(c, L"out of memory");
+                    c->fields = new_fields;
                     c->capf = nc;
                 }
                 c->fields[c->nf++] = fv;
@@ -30296,7 +30312,9 @@ static void AwkEnsureFields(AwkCtx* c) {
             AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + i, 1));
             if (c->nf == c->capf) {
                 size_t nc = c->capf ? c->capf * 2 : 16;
-                c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                if (!new_fields) AwkFatal(c, L"out of memory");
+                c->fields = new_fields;
                 c->capf = nc;
             }
             c->fields[c->nf++] = fv;
@@ -34074,17 +34092,22 @@ bool Builtin_Column(CommandAST* cmd, int* code) {
             size_t l = wcslen(line); while (l > 0 && (line[l-1] == L'\r' || line[l-1] == L'\n')) line[--l] = L'\0';
             if (row_count >= row_cap) {
                 row_cap *= 2;
-                rows = (TableRow*)realloc(rows, row_cap * sizeof(TableRow));
+                TableRow* new_rows = (TableRow*)realloc(rows, row_cap * sizeof(TableRow));
+                if (!new_rows) break;
+                rows = new_rows;
             }
             TableRow* r = &rows[row_count++];
-            r->cols = (wchar_t**)malloc(64 * sizeof(wchar_t*));
+            r->cols = (wchar_t**)calloc(64, sizeof(wchar_t*));
             r->num_cols = 0;
+            if (!r->cols) continue;
 
             wchar_t* context = NULL;
             const wchar_t* sep = delim ? delim : L" \t";
             wchar_t* tok = wcstok_s(line, sep, &context);
             while (tok && r->num_cols < 64) {
-                r->cols[r->num_cols] = _wcsdup(tok);
+                wchar_t* dtok = _wcsdup(tok);
+                if (!dtok) break;
+                r->cols[r->num_cols] = dtok;
                 int tok_len = (int)wcslen(tok);
                 if (r->num_cols < 64 && tok_len > col_widths[r->num_cols]) {
                     col_widths[r->num_cols] = tok_len;

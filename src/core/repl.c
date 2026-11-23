@@ -670,7 +670,7 @@ static bool Shell_ReadLineInteractive(IShell* self, wchar_t* line, size_t maxLen
                 continue;
             }
             if (c == 21) { /* Ctrl+U: Kill line to cursor */
-                wcsncpy_s(s_kill_ring, MAX_LINE_LEN, line, cursor);
+                wcsncpy_s(s_kill_ring, _countof(s_kill_ring), line, cursor < _countof(s_kill_ring) ? cursor : _TRUNCATE);
                 size_t old_length = length;
                 memmove(line, line + cursor, (length - cursor + 1) * sizeof(wchar_t));
                 length -= cursor;
@@ -699,7 +699,7 @@ static bool Shell_ReadLineInteractive(IShell* self, wchar_t* line, size_t maxLen
                     size_t npos = ViWordBackward(line, cursor);
                     size_t del_cnt = cursor - npos;
                     size_t old_length = length;
-                    wcsncpy_s(s_kill_ring, MAX_LINE_LEN, line + npos, del_cnt);
+                    wcsncpy_s(s_kill_ring, _countof(s_kill_ring), line + npos, del_cnt < _countof(s_kill_ring) ? del_cnt : _TRUNCATE);
                     cursor = npos;
                     memmove(&line[cursor], &line[cursor + del_cnt], (length - (cursor + del_cnt) + 1) * sizeof(wchar_t));
                     length -= del_cnt;

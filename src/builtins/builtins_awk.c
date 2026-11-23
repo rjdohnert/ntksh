@@ -1630,7 +1630,9 @@ static void AwkParseFunction(AwkCtx* c) {
             }
             if (fn->nparams == pcap) {
                 pcap *= 2;
-                fn->params = (wchar_t**)realloc(fn->params, pcap * sizeof(wchar_t*));
+                wchar_t** new_params = (wchar_t**)realloc(fn->params, pcap * sizeof(wchar_t*));
+                if (!new_params) AwkFatal(c, L"out of memory");
+                fn->params = new_params;
             }
             fn->params[fn->nparams++] = c->cur.text;
             AwkLexNext(c, false);
@@ -1891,7 +1893,9 @@ static void AwkEnsureFields(AwkCtx* c) {
             AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + start, i - start));
             if (c->nf == c->capf) {
                 size_t nc = c->capf ? c->capf * 2 : 16;
-                c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                if (!new_fields) AwkFatal(c, L"out of memory");
+                c->fields = new_fields;
                 c->capf = nc;
             }
             c->fields[c->nf++] = fv;
@@ -1904,7 +1908,9 @@ static void AwkEnsureFields(AwkCtx* c) {
                 AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + start, i - start));
                 if (c->nf == c->capf) {
                     size_t nc = c->capf ? c->capf * 2 : 16;
-                    c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    if (!new_fields) AwkFatal(c, L"out of memory");
+                    c->fields = new_fields;
                     c->capf = nc;
                 }
                 c->fields[c->nf++] = fv;
@@ -1920,7 +1926,9 @@ static void AwkEnsureFields(AwkCtx* c) {
                 AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + from, m.s[0] - from));
                 if (c->nf == c->capf) {
                     size_t nc = c->capf ? c->capf * 2 : 16;
-                    c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    if (!new_fields) AwkFatal(c, L"out of memory");
+                    c->fields = new_fields;
                     c->capf = nc;
                 }
                 c->fields[c->nf++] = fv;
@@ -1929,7 +1937,9 @@ static void AwkEnsureFields(AwkCtx* c) {
                 AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + from, tlen - from));
                 if (c->nf == c->capf) {
                     size_t nc = c->capf ? c->capf * 2 : 16;
-                    c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                    if (!new_fields) AwkFatal(c, L"out of memory");
+                    c->fields = new_fields;
                     c->capf = nc;
                 }
                 c->fields[c->nf++] = fv;
@@ -1942,7 +1952,9 @@ static void AwkEnsureFields(AwkCtx* c) {
             AwkValue fv = AwkStrnumOwnV(c, AwkDupN(c, text + i, 1));
             if (c->nf == c->capf) {
                 size_t nc = c->capf ? c->capf * 2 : 16;
-                c->fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                AwkValue* new_fields = (AwkValue*)realloc(c->fields, nc * sizeof(AwkValue));
+                if (!new_fields) AwkFatal(c, L"out of memory");
+                c->fields = new_fields;
                 c->capf = nc;
             }
             c->fields[c->nf++] = fv;

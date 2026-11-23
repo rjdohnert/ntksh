@@ -1712,17 +1712,22 @@ bool Builtin_Column(CommandAST* cmd, int* code) {
             size_t l = wcslen(line); while (l > 0 && (line[l-1] == L'\r' || line[l-1] == L'\n')) line[--l] = L'\0';
             if (row_count >= row_cap) {
                 row_cap *= 2;
-                rows = (TableRow*)realloc(rows, row_cap * sizeof(TableRow));
+                TableRow* new_rows = (TableRow*)realloc(rows, row_cap * sizeof(TableRow));
+                if (!new_rows) break;
+                rows = new_rows;
             }
             TableRow* r = &rows[row_count++];
-            r->cols = (wchar_t**)malloc(64 * sizeof(wchar_t*));
+            r->cols = (wchar_t**)calloc(64, sizeof(wchar_t*));
             r->num_cols = 0;
+            if (!r->cols) continue;
 
             wchar_t* context = NULL;
             const wchar_t* sep = delim ? delim : L" \t";
             wchar_t* tok = wcstok_s(line, sep, &context);
             while (tok && r->num_cols < 64) {
-                r->cols[r->num_cols] = _wcsdup(tok);
+                wchar_t* dtok = _wcsdup(tok);
+                if (!dtok) break;
+                r->cols[r->num_cols] = dtok;
                 int tok_len = (int)wcslen(tok);
                 if (r->num_cols < 64 && tok_len > col_widths[r->num_cols]) {
                     col_widths[r->num_cols] = tok_len;

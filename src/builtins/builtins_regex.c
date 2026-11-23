@@ -67,6 +67,9 @@ typedef struct RxParser {
     const wchar_t* err;
 } RxParser;
 
+static RxNode* RxNewNode(int type);
+static void RxFreeNode(RxNode* n);
+
 static RxNode* RxNewNode(int type) {
     RxNode* n = (RxNode*)calloc(1, sizeof(RxNode));
     if (n) {
@@ -81,7 +84,10 @@ static void RxSeqPush(RxSeq* s, RxNode* n) {
     if (s->count == s->cap) {
         int ncap = s->cap ? s->cap * 2 : 4;
         RxNode** items = (RxNode**)realloc(s->items, sizeof(RxNode*) * ncap);
-        if (!items) return;
+        if (!items) {
+            RxFreeNode(n);
+            return;
+        }
         s->items = items;
         s->cap = ncap;
     }

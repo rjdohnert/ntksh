@@ -634,7 +634,7 @@ static int SedExec(SedState* st, SedInput* in) {
                 break;
             case L'=': {
                 wchar_t buf[32];
-                swprintf(buf, 32, L"%lu\n", (unsigned long)st->line_no);
+                swprintf_s(buf, _countof(buf), L"%lu\n", (unsigned long)st->line_no);
                 SedPutChars(st, st->out, buf, wcslen(buf));
                 break;
             }
@@ -1276,7 +1276,7 @@ static bool SedParseOne(SedParser* p) {
             return SedError(p, L"e command is not supported");
         default: {
             wchar_t msg[64];
-            swprintf(msg, 64, L"unknown command: '%lc'", cmd);
+            swprintf_s(msg, _countof(msg), L"unknown command: '%lc'", cmd);
             return SedError(p, msg);
         }
     }
@@ -1483,7 +1483,7 @@ static void SedBackupName(const wchar_t* name, const wchar_t* suffix, wchar_t* o
     size_t base_len = wcslen(name + base_start);
     size_t o = 0;
     if (!wcschr(suffix, L'*')) {
-        o = swprintf(out, cap, L"%ls%ls", name, suffix) < 0 ? 0 : wcslen(out);
+        o = (swprintf_s(out, cap, L"%ls%ls", name, suffix) < 0) ? 0 : wcslen(out);
         return;
     }
     if (dir_len >= cap) dir_len = 0;
