@@ -1007,7 +1007,13 @@ static int Batch_ExecuteForFCommand(IShell* shell, BatchContext* context,
         read) {
         if (pendingLength + read > pendingCapacity) {
             size_t capacity = pendingCapacity ? pendingCapacity : 4096;
-            while (capacity < pendingLength + read) capacity *= 2;
+            while (capacity < pendingLength + read) {
+                if (capacity > SIZE_MAX / 2) {
+                    capacity = pendingLength + read;
+                    break;
+                }
+                capacity *= 2;
+            }
             char* resized = (char*)realloc(pending, capacity);
             if (!resized) {
                 status = 1;

@@ -1971,7 +1971,6 @@ static int ExecuteLineSegment(IShell* self, const wchar_t* line,
                 int readFd = _open_osfhandle((intptr_t)hRead, _O_RDONLY | _O_BINARY);
                 if (readFd >= 0) {
                     _dup2(readFd, _fileno(stdin));
-                    _close(readFd);
                     _setmode(_fileno(stdin), _O_U8TEXT);
                     clearerr(stdin);
                     SetStdHandle(STD_INPUT_HANDLE, hRead);
@@ -1990,7 +1989,11 @@ static int ExecuteLineSegment(IShell* self, const wchar_t* line,
                     clearerr(stdin);
                     SetStdHandle(STD_INPUT_HANDLE, savedStdInHandle);
                 }
-                CloseHandle(hRead);
+                if (readFd >= 0) {
+                    _close(readFd);
+                } else {
+                    CloseHandle(hRead);
+                }
 
                 free(aliasExpanded);
                 self->last_status = rhsStatus;
@@ -2985,6 +2988,7 @@ void Shell_Destroy(IShell* self) {
     if (self->executor) self->executor->Destroy(self->executor);
     if (self->parser) self->parser->Destroy(self->parser);
     if (self->env) self->env->Destroy(self->env);
+    History_Cleanup();
     free(self);
 }
 

@@ -520,6 +520,7 @@ extern int g_history_count;
 void History_Add(const wchar_t* line);
 void History_LoadFromFile(void);
 void History_SaveToFile(const wchar_t* line);
+void History_Cleanup(void);
 
 extern ShellJob g_jobs[64];
 extern int g_job_count;
@@ -4909,6 +4910,7 @@ static int Executor_Execute(IExecutor* self, CommandAST* ast) {
 
             if (!CreatePipe(&hPipeRead, &hPipeWrite, &sa, 1048576)) {
                 wprintf(L"ksh: fatal pipe creation error\n");
+                if (hPrevRead) CloseHandle(hPrevRead);
                 return 1;
             }
             SetHandleInformation(hPipeRead, HANDLE_FLAG_INHERIT, 0);
@@ -5021,10 +5023,15 @@ void History_Add(const wchar_t* line) {
     History_SaveToFile(line);
 }
 
-
-
-ShellJob g_jobs[64];
-
+void History_Cleanup(void) {
+    for (int i = 0; i < g_history_count; i++) {
+        if (g_history[i]) {
+            free(g_history[i]);
+            g_history[i] = NULL;
+        }
+    }
+    g_history_count = 0;
+}
 
 void Shell_UpdateJobsNotify(IShell* shell) {
     for (int i = 0; i < g_job_count; i++) {
@@ -11632,7 +11639,13 @@ static int Batch_ExecuteForFCommand(IShell* shell, BatchContext* context,
         read) {
         if (pendingLength + read > pendingCapacity) {
             size_t capacity = pendingCapacity ? pendingCapacity : 4096;
-            while (capacity < pendingLength + read) capacity *= 2;
+            while (capacity < pendingLength + read) {
+                if (capacity > SIZE_MAX / 2) {
+                    capacity = pendingLength + read;
+                    break;
+                }
+                capacity *= 2;
+            }
             char* resized = (char*)realloc(pending, capacity);
             if (!resized) {
                 status = 1;
@@ -13937,7 +13950,6 @@ static int ExecuteLineSegment(IShell* self, const wchar_t* line,
                 int readFd = _open_osfhandle((intptr_t)hRead, _O_RDONLY | _O_BINARY);
                 if (readFd >= 0) {
                     _dup2(readFd, _fileno(stdin));
-                    _close(readFd);
                     _setmode(_fileno(stdin), _O_U8TEXT);
                     clearerr(stdin);
                     SetStdHandle(STD_INPUT_HANDLE, hRead);
@@ -13956,7 +13968,11 @@ static int ExecuteLineSegment(IShell* self, const wchar_t* line,
                     clearerr(stdin);
                     SetStdHandle(STD_INPUT_HANDLE, savedStdInHandle);
                 }
-                CloseHandle(hRead);
+                if (readFd >= 0) {
+                    _close(readFd);
+                } else {
+                    CloseHandle(hRead);
+                }
 
                 free(aliasExpanded);
                 self->last_status = rhsStatus;
@@ -14951,6 +14967,7 @@ void Shell_Destroy(IShell* self) {
     if (self->executor) self->executor->Destroy(self->executor);
     if (self->parser) self->parser->Destroy(self->parser);
     if (self->env) self->env->Destroy(self->env);
+    History_Cleanup();
     free(self);
 }
 

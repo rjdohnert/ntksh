@@ -336,6 +336,7 @@ extern int g_history_count;
 void History_Add(const wchar_t* line);
 void History_LoadFromFile(void);
 void History_SaveToFile(const wchar_t* line);
+void History_Cleanup(void);
 
 extern ShellJob g_jobs[64];
 extern int g_job_count;

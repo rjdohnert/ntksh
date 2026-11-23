@@ -1031,6 +1031,7 @@ static int Executor_Execute(IExecutor* self, CommandAST* ast) {
 
             if (!CreatePipe(&hPipeRead, &hPipeWrite, &sa, 1048576)) {
                 wprintf(L"ksh: fatal pipe creation error\n");
+                if (hPrevRead) CloseHandle(hPrevRead);
                 return 1;
             }
             SetHandleInformation(hPipeRead, HANDLE_FLAG_INHERIT, 0);

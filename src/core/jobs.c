@@ -70,10 +70,15 @@ void History_Add(const wchar_t* line) {
     History_SaveToFile(line);
 }
 
-
-
-ShellJob g_jobs[64];
-
+void History_Cleanup(void) {
+    for (int i = 0; i < g_history_count; i++) {
+        if (g_history[i]) {
+            free(g_history[i]);
+            g_history[i] = NULL;
+        }
+    }
+    g_history_count = 0;
+}
 
 void Shell_UpdateJobsNotify(IShell* shell) {
     for (int i = 0; i < g_job_count; i++) {
