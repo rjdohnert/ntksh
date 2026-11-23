@@ -1539,7 +1539,14 @@ static int NetDownloadUrl(const wchar_t* url,
             wchar_t* q = wcschr(resolvedFile, L'?');
             if (q) *q = L'\0';
         }
-        if (!resolvedFile[0]) wcscpy_s(resolvedFile, _countof(resolvedFile), L"index.html");
+        for (size_t s = 0; resolvedFile[s]; s++) {
+            if (resolvedFile[s] == L'/' || resolvedFile[s] == L'\\' || resolvedFile[s] == L':') {
+                resolvedFile[s] = L'_';
+            }
+        }
+        if (!resolvedFile[0] || wcscmp(resolvedFile, L".") == 0 || wcscmp(resolvedFile, L"..") == 0) {
+            wcscpy_s(resolvedFile, _countof(resolvedFile), L"index.html");
+        }
         out_file = resolvedFile;
     }
 

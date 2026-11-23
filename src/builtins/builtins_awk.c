@@ -1622,6 +1622,7 @@ static void AwkParseFunction(AwkCtx* c) {
 
     size_t pcap = 4;
     fn->params = (wchar_t**)malloc(pcap * sizeof(wchar_t*));
+    if (!fn->params) AwkFatal(c, L"out of memory");
 
     if (c->cur.type != AWKT_RPAREN) {
         for (;;) {
@@ -2981,6 +2982,12 @@ bool Builtin_Awk(CommandAST* cmd, int* code) {
 
     /* Initialize special variables in globals */
     ctx.globals = (AwkVar*)calloc(AWKV_COUNT + 64, sizeof(AwkVar));
+    if (!ctx.pool || !ctx.globals) {
+        free(ctx.pool);
+        free(ctx.globals);
+        *code = 1;
+        return true;
+    }
     for (int i = 0; i < AWKV_COUNT; i++) ctx.globals[i].v = AwkUninitV(&ctx);
 
     ctx.globals[AWKV_FS].v = AwkStrOwnV(AwkDupN(&ctx, L" ", 1));

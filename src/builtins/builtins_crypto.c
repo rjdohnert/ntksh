@@ -892,12 +892,29 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
 
         size_t in_cap = 65536, in_len = 0;
         unsigned char* in_data = (unsigned char*)malloc(in_cap);
+        if (!in_data) {
+            if (!is_stdin && in) fclose(in);
+            ret = 1;
+            continue;
+        }
         if (is_stdin) {
             wint_t wc;
             while ((wc = getwchar()) != WEOF) {
                 if (in_len >= in_cap) {
-                    in_cap *= 2;
-                    in_data = (unsigned char*)realloc(in_data, in_cap);
+                    if (in_cap > SIZE_MAX / 2) {
+                        free(in_data);
+                        in_data = NULL;
+                        break;
+                    }
+                    size_t new_cap = in_cap * 2;
+                    unsigned char* new_data = (unsigned char*)realloc(in_data, new_cap);
+                    if (!new_data) {
+                        free(in_data);
+                        in_data = NULL;
+                        break;
+                    }
+                    in_data = new_data;
+                    in_cap = new_cap;
                 }
                 in_data[in_len++] = (unsigned char)wc;
             }
@@ -906,11 +923,27 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
             while ((nr = fread(in_data + in_len, 1, in_cap - in_len, in)) > 0) {
                 in_len += nr;
                 if (in_len == in_cap) {
-                    in_cap *= 2;
-                    in_data = (unsigned char*)realloc(in_data, in_cap);
+                    if (in_cap > SIZE_MAX / 2) {
+                        free(in_data);
+                        in_data = NULL;
+                        break;
+                    }
+                    size_t new_cap = in_cap * 2;
+                    unsigned char* new_data = (unsigned char*)realloc(in_data, new_cap);
+                    if (!new_data) {
+                        free(in_data);
+                        in_data = NULL;
+                        break;
+                    }
+                    in_data = new_data;
+                    in_cap = new_cap;
                 }
             }
             fclose(in);
+        }
+        if (!in_data) {
+            ret = 1;
+            continue;
         }
 
         FILE* out = NULL;
@@ -1055,7 +1088,8 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
             fflush(stdout);
         } else {
             fclose(out);
-            if (!keep && !is_stdin) DeleteFileW(path);
+            if (ret == 0 && !keep && !is_stdin) DeleteFileW(path);
+            else if (ret != 0 && !is_stdin) DeleteFileW(out_path);
         }
         free(in_data);
     }

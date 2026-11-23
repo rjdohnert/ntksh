@@ -3024,6 +3024,10 @@ bool Builtin_Tail(CommandAST* cmd, int* code) {
             }
         } else {
             wchar_t** lines = (wchar_t**)calloc(count > 0 ? count : 1, sizeof(wchar_t*));
+            if (!lines) {
+                if (!is_stdin && fp) fclose(fp);
+                continue;
+            }
             int head_idx = 0;
             int total_lines = 0;
             wchar_t line_buf[4096];
@@ -3042,6 +3046,9 @@ bool Builtin_Tail(CommandAST* cmd, int* code) {
                     free(lines[idx]);
                     lines[idx] = NULL;
                 }
+            }
+            for (int i = 0; i < (count > 0 ? count : 1); i++) {
+                if (lines[i]) free(lines[i]);
             }
             free(lines);
         }

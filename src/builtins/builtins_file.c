@@ -961,7 +961,8 @@ bool Builtin_Xargs(IShell* shell, CommandAST* cmd, int* code) {
                     items = new_items;
                     cap = new_cap;
                 }
-                items[count++] = _wcsdup(token);
+                wchar_t* dup = _wcsdup(token);
+                if (dup) items[count++] = dup;
                 tlen = 0;
             }
         } else {
@@ -976,10 +977,12 @@ bool Builtin_Xargs(IShell* shell, CommandAST* cmd, int* code) {
             if (new_items) {
                 items = new_items;
                 cap = new_cap;
-                items[count++] = _wcsdup(token);
+                wchar_t* dup = _wcsdup(token);
+                if (dup) items[count++] = dup;
             }
         } else {
-            items[count++] = _wcsdup(token);
+            wchar_t* dup = _wcsdup(token);
+            if (dup) items[count++] = dup;
         }
     }
 
@@ -1698,6 +1701,10 @@ bool Builtin_Column(CommandAST* cmd, int* code) {
     TableRow* rows = NULL;
     int row_count = 0, row_cap = 64;
     rows = (TableRow*)malloc(row_cap * sizeof(TableRow));
+    if (!rows) {
+        *code = 1;
+        return true;
+    }
     int col_widths[64] = {0};
     int max_cols = 0;
 

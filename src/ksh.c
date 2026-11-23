@@ -22200,6 +22200,10 @@ bool Builtin_Tail(CommandAST* cmd, int* code) {
             }
         } else {
             wchar_t** lines = (wchar_t**)calloc(count > 0 ? count : 1, sizeof(wchar_t*));
+            if (!lines) {
+                if (!is_stdin && fp) fclose(fp);
+                continue;
+            }
             int head_idx = 0;
             int total_lines = 0;
             wchar_t line_buf[4096];
@@ -22218,6 +22222,9 @@ bool Builtin_Tail(CommandAST* cmd, int* code) {
                     free(lines[idx]);
                     lines[idx] = NULL;
                 }
+            }
+            for (int i = 0; i < (count > 0 ? count : 1); i++) {
+                if (lines[i]) free(lines[i]);
             }
             free(lines);
         }
@@ -24705,6 +24712,10 @@ bool Builtin_Comm(CommandAST* cmd, int* code) {
 static int JoinSplitFields(const wchar_t* line, wchar_t delim, wchar_t*** out) {
     int cap = 8, n = 0;
     wchar_t** f = (wchar_t**)malloc(cap * sizeof(wchar_t*));
+    if (!f) {
+        *out = NULL;
+        return 0;
+    }
     const wchar_t* p = line;
     bool blank = (delim == L' ');
     for (;;) {
@@ -24715,8 +24726,11 @@ static int JoinSplitFields(const wchar_t* line, wchar_t delim, wchar_t*** out) {
         const wchar_t* start = p;
         while (*p != L'\0' && (blank ? (*p != L' ' && *p != L'\t') : (*p != delim))) p++;
         if (n == cap) {
-            cap *= 2;
-            f = (wchar_t**)realloc(f, cap * sizeof(wchar_t*));
+            int new_cap = cap * 2;
+            wchar_t** new_f = (wchar_t**)realloc(f, new_cap * sizeof(wchar_t*));
+            if (!new_f) break;
+            f = new_f;
+            cap = new_cap;
         }
         size_t len = (size_t)(p - start);
         wchar_t* field = (wchar_t*)malloc((len + 1) * sizeof(wchar_t));
@@ -24826,14 +24840,24 @@ bool Builtin_Join(CommandAST* cmd, int* code) {
     wchar_t** f2_lines = NULL;
     int f2_count = 0, f2_cap = 64;
     f2_lines = (wchar_t**)malloc(f2_cap * sizeof(wchar_t*));
+    if (!f2_lines) {
+        if (fp1 && fp1 != stdin) fclose(fp1);
+        if (fp2 && fp2 != stdin) fclose(fp2);
+        *code = 1;
+        return true;
+    }
     wchar_t buf[4096];
     while (fgetws(buf, _countof(buf), fp2)) {
         size_t l = wcslen(buf); while (l > 0 && (buf[l-1] == L'\r' || buf[l-1] == L'\n')) buf[--l] = L'\0';
         if (f2_count >= f2_cap) {
-            f2_cap *= 2;
-            f2_lines = (wchar_t**)realloc(f2_lines, f2_cap * sizeof(wchar_t*));
+            int new_cap = f2_cap * 2;
+            wchar_t** new_f2 = (wchar_t**)realloc(f2_lines, new_cap * sizeof(wchar_t*));
+            if (!new_f2) break;
+            f2_lines = new_f2;
+            f2_cap = new_cap;
         }
-        f2_lines[f2_count++] = _wcsdup(buf);
+        wchar_t* dup = _wcsdup(buf);
+        if (dup) f2_lines[f2_count++] = dup;
     }
     if (fp2 != stdin) fclose(fp2);
 
@@ -25079,21 +25103,31 @@ bool Builtin_Tac(CommandAST* cmd, int* code) {
         wchar_t** lines = NULL;
         int count = 0, cap = 128;
         lines = (wchar_t**)malloc(cap * sizeof(wchar_t*));
+        if (!lines) {
+            if (!is_stdin && fp) fclose(fp);
+            continue;
+        }
         wchar_t buf[4096];
         while (fgetws(buf, _countof(buf), fp)) {
             size_t l = wcslen(buf);
             while (l > 0 && (buf[l-1] == L'\r' || buf[l-1] == L'\n')) buf[--l] = L'\0';
             if (count >= cap) {
-                cap *= 2;
-                lines = (wchar_t**)realloc(lines, cap * sizeof(wchar_t*));
+                int new_cap = cap * 2;
+                wchar_t** new_lines = (wchar_t**)realloc(lines, new_cap * sizeof(wchar_t*));
+                if (!new_lines) break;
+                lines = new_lines;
+                cap = new_cap;
             }
-            lines[count++] = _wcsdup(buf);
+            wchar_t* dup = _wcsdup(buf);
+            if (dup) lines[count++] = dup;
         }
         if (!is_stdin && fp) fclose(fp);
 
         for (int i = count - 1; i >= 0; i--) {
-            wprintf(L"%ls\n", lines[i]);
-            free(lines[i]);
+            if (lines[i]) {
+                wprintf(L"%ls\n", lines[i]);
+                free(lines[i]);
+            }
         }
         free(lines);
     }
@@ -29982,6 +30016,7 @@ static void AwkParseFunction(AwkCtx* c) {
 
     size_t pcap = 4;
     fn->params = (wchar_t**)malloc(pcap * sizeof(wchar_t*));
+    if (!fn->params) AwkFatal(c, L"out of memory");
 
     if (c->cur.type != AWKT_RPAREN) {
         for (;;) {
@@ -31341,6 +31376,12 @@ bool Builtin_Awk(CommandAST* cmd, int* code) {
 
     /* Initialize special variables in globals */
     ctx.globals = (AwkVar*)calloc(AWKV_COUNT + 64, sizeof(AwkVar));
+    if (!ctx.pool || !ctx.globals) {
+        free(ctx.pool);
+        free(ctx.globals);
+        *code = 1;
+        return true;
+    }
     for (int i = 0; i < AWKV_COUNT; i++) ctx.globals[i].v = AwkUninitV(&ctx);
 
     ctx.globals[AWKV_FS].v = AwkStrOwnV(AwkDupN(&ctx, L" ", 1));
@@ -31636,7 +31677,8 @@ static wchar_t** DiffReadLines(FILE* fp, size_t* out_count) {
             lines = nlines;
             cap = ncap;
         }
-        lines[count++] = _wcsdup(buf);
+        wchar_t* dup = _wcsdup(buf);
+        if (dup) lines[count++] = dup;
     }
     *out_count = count;
     return lines;
@@ -33341,7 +33383,8 @@ bool Builtin_Xargs(IShell* shell, CommandAST* cmd, int* code) {
                     items = new_items;
                     cap = new_cap;
                 }
-                items[count++] = _wcsdup(token);
+                wchar_t* dup = _wcsdup(token);
+                if (dup) items[count++] = dup;
                 tlen = 0;
             }
         } else {
@@ -33356,10 +33399,12 @@ bool Builtin_Xargs(IShell* shell, CommandAST* cmd, int* code) {
             if (new_items) {
                 items = new_items;
                 cap = new_cap;
-                items[count++] = _wcsdup(token);
+                wchar_t* dup = _wcsdup(token);
+                if (dup) items[count++] = dup;
             }
         } else {
-            items[count++] = _wcsdup(token);
+            wchar_t* dup = _wcsdup(token);
+            if (dup) items[count++] = dup;
         }
     }
 
@@ -34078,6 +34123,10 @@ bool Builtin_Column(CommandAST* cmd, int* code) {
     TableRow* rows = NULL;
     int row_count = 0, row_cap = 64;
     rows = (TableRow*)malloc(row_cap * sizeof(TableRow));
+    if (!rows) {
+        *code = 1;
+        return true;
+    }
     int col_widths[64] = {0};
     int max_cols = 0;
 
@@ -35260,12 +35309,29 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
 
         size_t in_cap = 65536, in_len = 0;
         unsigned char* in_data = (unsigned char*)malloc(in_cap);
+        if (!in_data) {
+            if (!is_stdin && in) fclose(in);
+            ret = 1;
+            continue;
+        }
         if (is_stdin) {
             wint_t wc;
             while ((wc = getwchar()) != WEOF) {
                 if (in_len >= in_cap) {
-                    in_cap *= 2;
-                    in_data = (unsigned char*)realloc(in_data, in_cap);
+                    if (in_cap > SIZE_MAX / 2) {
+                        free(in_data);
+                        in_data = NULL;
+                        break;
+                    }
+                    size_t new_cap = in_cap * 2;
+                    unsigned char* new_data = (unsigned char*)realloc(in_data, new_cap);
+                    if (!new_data) {
+                        free(in_data);
+                        in_data = NULL;
+                        break;
+                    }
+                    in_data = new_data;
+                    in_cap = new_cap;
                 }
                 in_data[in_len++] = (unsigned char)wc;
             }
@@ -35274,11 +35340,27 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
             while ((nr = fread(in_data + in_len, 1, in_cap - in_len, in)) > 0) {
                 in_len += nr;
                 if (in_len == in_cap) {
-                    in_cap *= 2;
-                    in_data = (unsigned char*)realloc(in_data, in_cap);
+                    if (in_cap > SIZE_MAX / 2) {
+                        free(in_data);
+                        in_data = NULL;
+                        break;
+                    }
+                    size_t new_cap = in_cap * 2;
+                    unsigned char* new_data = (unsigned char*)realloc(in_data, new_cap);
+                    if (!new_data) {
+                        free(in_data);
+                        in_data = NULL;
+                        break;
+                    }
+                    in_data = new_data;
+                    in_cap = new_cap;
                 }
             }
             fclose(in);
+        }
+        if (!in_data) {
+            ret = 1;
+            continue;
         }
 
         FILE* out = NULL;
@@ -35423,7 +35505,8 @@ bool Builtin_Gzip(CommandAST* cmd, int* code) {
             fflush(stdout);
         } else {
             fclose(out);
-            if (!keep && !is_stdin) DeleteFileW(path);
+            if (ret == 0 && !keep && !is_stdin) DeleteFileW(path);
+            else if (ret != 0 && !is_stdin) DeleteFileW(out_path);
         }
         free(in_data);
     }
@@ -37747,7 +37830,14 @@ static int NetDownloadUrl(const wchar_t* url,
             wchar_t* q = wcschr(resolvedFile, L'?');
             if (q) *q = L'\0';
         }
-        if (!resolvedFile[0]) wcscpy_s(resolvedFile, _countof(resolvedFile), L"index.html");
+        for (size_t s = 0; resolvedFile[s]; s++) {
+            if (resolvedFile[s] == L'/' || resolvedFile[s] == L'\\' || resolvedFile[s] == L':') {
+                resolvedFile[s] = L'_';
+            }
+        }
+        if (!resolvedFile[0] || wcscmp(resolvedFile, L".") == 0 || wcscmp(resolvedFile, L"..") == 0) {
+            wcscpy_s(resolvedFile, _countof(resolvedFile), L"index.html");
+        }
         out_file = resolvedFile;
     }
 
@@ -38985,15 +39075,29 @@ bool Builtin_Rs(CommandAST* cmd, int* code) {
         if (len == 0 && !line_as_row) continue;
 
         if (line_as_row) {
-            if (count >= cap) { cap *= 2; items = (wchar_t**)realloc(items, cap * sizeof(wchar_t*)); }
-            items[count++] = _wcsdup(line);
+            if (count >= cap) {
+                size_t new_cap = cap * 2;
+                wchar_t** new_items = (wchar_t**)realloc(items, new_cap * sizeof(wchar_t*));
+                if (!new_items) break;
+                items = new_items;
+                cap = new_cap;
+            }
+            wchar_t* dup = _wcsdup(line);
+            if (dup) items[count++] = dup;
         } else if (in_delim != L'\0') {
             wchar_t* p = line;
             while (*p) {
                 wchar_t* next = wcschr(p, in_delim);
                 if (next) *next = L'\0';
-                if (count >= cap) { cap *= 2; items = (wchar_t**)realloc(items, cap * sizeof(wchar_t*)); }
-                items[count++] = _wcsdup(p);
+                if (count >= cap) {
+                    size_t new_cap = cap * 2;
+                    wchar_t** new_items = (wchar_t**)realloc(items, new_cap * sizeof(wchar_t*));
+                    if (!new_items) break;
+                    items = new_items;
+                    cap = new_cap;
+                }
+                wchar_t* dup = _wcsdup(p);
+                if (dup) items[count++] = dup;
                 if (!next) break;
                 p = next + 1;
             }
@@ -39723,6 +39827,19 @@ static const wchar_t* StripPath(const wchar_t* path, int p_strip) {
     return (*p) ? p : path;
 }
 
+static bool PatchAppend(wchar_t*** arr, size_t* count, size_t* cap, wchar_t* line) {
+    if (!*arr || !line) { free(line); return false; }
+    if (*count >= *cap) {
+        size_t ncap = *cap * 2;
+        wchar_t** narr = (wchar_t**)realloc(*arr, ncap * sizeof(wchar_t*));
+        if (!narr) { free(line); return false; }
+        *arr = narr;
+        *cap = ncap;
+    }
+    (*arr)[(*count)++] = line;
+    return true;
+}
+
 bool Builtin_Patch(CommandAST* cmd, int* code) {
     if (cmd->argc > 1 && (_wcsicmp(cmd->argv[1], L"/?") == 0 || wcscmp(cmd->argv[1], L"--help") == 0)) {
         wprintf(L"Usage: patch [-R] [-s] [-b] [-p strip] [-i patchfile] [-o outfile] [-d dir] [origfile]\n"
@@ -39777,10 +39894,14 @@ bool Builtin_Patch(CommandAST* cmd, int* code) {
     /* Read all patch lines */
     size_t pcap = 512, pcount = 0;
     wchar_t** plines = (wchar_t**)malloc(pcap * sizeof(wchar_t*));
+    if (!plines) {
+        if (pfp != stdin) fclose(pfp);
+        *code = 1;
+        return true;
+    }
     wchar_t lbuf[8192];
     while (fgetws(lbuf, sizeof(lbuf) / sizeof(lbuf[0]), pfp)) {
-        if (pcount >= pcap) { pcap *= 2; plines = (wchar_t**)realloc(plines, pcap * sizeof(wchar_t*)); }
-        plines[pcount++] = _wcsdup(lbuf);
+        PatchAppend(&plines, &pcount, &pcap, _wcsdup(lbuf));
     }
     if (pfp != stdin) fclose(pfp);
 
@@ -39819,9 +39940,15 @@ bool Builtin_Patch(CommandAST* cmd, int* code) {
 
     size_t fcap = 512, fcount = 0;
     wchar_t** flines = (wchar_t**)malloc(fcap * sizeof(wchar_t*));
+    if (!flines) {
+        fclose(tfp);
+        for (size_t i = 0; i < pcount; i++) free(plines[i]);
+        free(plines);
+        *code = 1;
+        return true;
+    }
     while (fgetws(lbuf, sizeof(lbuf) / sizeof(lbuf[0]), tfp)) {
-        if (fcount >= fcap) { fcap *= 2; flines = (wchar_t**)realloc(flines, fcap * sizeof(wchar_t*)); }
-        flines[fcount++] = _wcsdup(lbuf);
+        PatchAppend(&flines, &fcount, &fcap, _wcsdup(lbuf));
     }
     fclose(tfp);
 
@@ -39832,6 +39959,14 @@ bool Builtin_Patch(CommandAST* cmd, int* code) {
     /* Result lines buffer */
     size_t rcap = fcount + 512, rcount = 0;
     wchar_t** rlines = (wchar_t**)malloc(rcap * sizeof(wchar_t*));
+    if (!rlines) {
+        for (size_t i = 0; i < pcount; i++) free(plines[i]);
+        free(plines);
+        for (size_t i = 0; i < fcount; i++) free(flines[i]);
+        free(flines);
+        *code = 1;
+        return true;
+    }
     size_t cur_src = 0;
 
     for (size_t i = 0; i < pcount; i++) {
@@ -39847,8 +39982,7 @@ bool Builtin_Patch(CommandAST* cmd, int* code) {
 
             /* Copy unchanged source lines up to target_line */
             while (cur_src < (size_t)target_line && cur_src < fcount) {
-                if (rcount >= rcap) { rcap *= 2; rlines = (wchar_t**)realloc(rlines, rcap * sizeof(wchar_t*)); }
-                rlines[rcount++] = _wcsdup(flines[cur_src++]);
+                PatchAppend(&rlines, &rcount, &rcap, _wcsdup(flines[cur_src++]));
             }
 
             /* Process hunk lines */
@@ -39862,14 +39996,12 @@ bool Builtin_Patch(CommandAST* cmd, int* code) {
 
                 if (type == L' ') {
                     if (cur_src < fcount) {
-                        if (rcount >= rcap) { rcap *= 2; rlines = (wchar_t**)realloc(rlines, rcap * sizeof(wchar_t*)); }
-                        rlines[rcount++] = _wcsdup(flines[cur_src++]);
+                        PatchAppend(&rlines, &rcount, &rcap, _wcsdup(flines[cur_src++]));
                     }
                 } else if (type == L'-') {
                     if (cur_src < fcount) cur_src++;
                 } else if (type == L'+') {
-                    if (rcount >= rcap) { rcap *= 2; rlines = (wchar_t**)realloc(rlines, rcap * sizeof(wchar_t*)); }
-                    rlines[rcount++] = _wcsdup(plines[i] + 1);
+                    PatchAppend(&rlines, &rcount, &rcap, _wcsdup(plines[i] + 1));
                 }
                 i++;
             }
@@ -39879,8 +40011,7 @@ bool Builtin_Patch(CommandAST* cmd, int* code) {
 
     /* Copy any remaining trailing lines */
     while (cur_src < fcount) {
-        if (rcount >= rcap) { rcap *= 2; rlines = (wchar_t**)realloc(rlines, rcap * sizeof(wchar_t*)); }
-        rlines[rcount++] = _wcsdup(flines[cur_src++]);
+        PatchAppend(&rlines, &rcount, &rcap, _wcsdup(flines[cur_src++]));
     }
 
     /* Optional backup */
@@ -39964,10 +40095,11 @@ static bool MatchPattern(const wchar_t* pat, const wchar_t* str) {
 
 static bool TarIsPathSafe(const wchar_t* path) {
     if (!path || !*path) return false;
+    if (!path || !*path) return false;
     /* Reject absolute paths: leading slash or backslash */
     if (path[0] == L'/' || path[0] == L'\\') return false;
-    /* Reject drive letters: C: etc */
-    if (((path[0] >= L'a' && path[0] <= L'z') || (path[0] >= L'A' && path[0] <= L'Z')) && path[1] == L':') return false;
+    /* Reject drive letters or NTFS alternate data streams */
+    if (wcschr(path, L':') != NULL) return false;
     /* Reject directory traversal with .. */
     const wchar_t* p = path;
     while (*p) {

@@ -118,7 +118,8 @@ static wchar_t** DiffReadLines(FILE* fp, size_t* out_count) {
             lines = nlines;
             cap = ncap;
         }
-        lines[count++] = _wcsdup(buf);
+        wchar_t* dup = _wcsdup(buf);
+        if (dup) lines[count++] = dup;
     }
     *out_count = count;
     return lines;

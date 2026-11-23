@@ -1109,15 +1109,29 @@ bool Builtin_Rs(CommandAST* cmd, int* code) {
         if (len == 0 && !line_as_row) continue;
 
         if (line_as_row) {
-            if (count >= cap) { cap *= 2; items = (wchar_t**)realloc(items, cap * sizeof(wchar_t*)); }
-            items[count++] = _wcsdup(line);
+            if (count >= cap) {
+                size_t new_cap = cap * 2;
+                wchar_t** new_items = (wchar_t**)realloc(items, new_cap * sizeof(wchar_t*));
+                if (!new_items) break;
+                items = new_items;
+                cap = new_cap;
+            }
+            wchar_t* dup = _wcsdup(line);
+            if (dup) items[count++] = dup;
         } else if (in_delim != L'\0') {
             wchar_t* p = line;
             while (*p) {
                 wchar_t* next = wcschr(p, in_delim);
                 if (next) *next = L'\0';
-                if (count >= cap) { cap *= 2; items = (wchar_t**)realloc(items, cap * sizeof(wchar_t*)); }
-                items[count++] = _wcsdup(p);
+                if (count >= cap) {
+                    size_t new_cap = cap * 2;
+                    wchar_t** new_items = (wchar_t**)realloc(items, new_cap * sizeof(wchar_t*));
+                    if (!new_items) break;
+                    items = new_items;
+                    cap = new_cap;
+                }
+                wchar_t* dup = _wcsdup(p);
+                if (dup) items[count++] = dup;
                 if (!next) break;
                 p = next + 1;
             }

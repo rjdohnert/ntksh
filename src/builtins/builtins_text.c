@@ -1511,6 +1511,10 @@ bool Builtin_Comm(CommandAST* cmd, int* code) {
 static int JoinSplitFields(const wchar_t* line, wchar_t delim, wchar_t*** out) {
     int cap = 8, n = 0;
     wchar_t** f = (wchar_t**)malloc(cap * sizeof(wchar_t*));
+    if (!f) {
+        *out = NULL;
+        return 0;
+    }
     const wchar_t* p = line;
     bool blank = (delim == L' ');
     for (;;) {
@@ -1521,8 +1525,11 @@ static int JoinSplitFields(const wchar_t* line, wchar_t delim, wchar_t*** out) {
         const wchar_t* start = p;
         while (*p != L'\0' && (blank ? (*p != L' ' && *p != L'\t') : (*p != delim))) p++;
         if (n == cap) {
-            cap *= 2;
-            f = (wchar_t**)realloc(f, cap * sizeof(wchar_t*));
+            int new_cap = cap * 2;
+            wchar_t** new_f = (wchar_t**)realloc(f, new_cap * sizeof(wchar_t*));
+            if (!new_f) break;
+            f = new_f;
+            cap = new_cap;
         }
         size_t len = (size_t)(p - start);
         wchar_t* field = (wchar_t*)malloc((len + 1) * sizeof(wchar_t));
@@ -1632,14 +1639,24 @@ bool Builtin_Join(CommandAST* cmd, int* code) {
     wchar_t** f2_lines = NULL;
     int f2_count = 0, f2_cap = 64;
     f2_lines = (wchar_t**)malloc(f2_cap * sizeof(wchar_t*));
+    if (!f2_lines) {
+        if (fp1 && fp1 != stdin) fclose(fp1);
+        if (fp2 && fp2 != stdin) fclose(fp2);
+        *code = 1;
+        return true;
+    }
     wchar_t buf[4096];
     while (fgetws(buf, _countof(buf), fp2)) {
         size_t l = wcslen(buf); while (l > 0 && (buf[l-1] == L'\r' || buf[l-1] == L'\n')) buf[--l] = L'\0';
         if (f2_count >= f2_cap) {
-            f2_cap *= 2;
-            f2_lines = (wchar_t**)realloc(f2_lines, f2_cap * sizeof(wchar_t*));
+            int new_cap = f2_cap * 2;
+            wchar_t** new_f2 = (wchar_t**)realloc(f2_lines, new_cap * sizeof(wchar_t*));
+            if (!new_f2) break;
+            f2_lines = new_f2;
+            f2_cap = new_cap;
         }
-        f2_lines[f2_count++] = _wcsdup(buf);
+        wchar_t* dup = _wcsdup(buf);
+        if (dup) f2_lines[f2_count++] = dup;
     }
     if (fp2 != stdin) fclose(fp2);
 
@@ -1885,21 +1902,31 @@ bool Builtin_Tac(CommandAST* cmd, int* code) {
         wchar_t** lines = NULL;
         int count = 0, cap = 128;
         lines = (wchar_t**)malloc(cap * sizeof(wchar_t*));
+        if (!lines) {
+            if (!is_stdin && fp) fclose(fp);
+            continue;
+        }
         wchar_t buf[4096];
         while (fgetws(buf, _countof(buf), fp)) {
             size_t l = wcslen(buf);
             while (l > 0 && (buf[l-1] == L'\r' || buf[l-1] == L'\n')) buf[--l] = L'\0';
             if (count >= cap) {
-                cap *= 2;
-                lines = (wchar_t**)realloc(lines, cap * sizeof(wchar_t*));
+                int new_cap = cap * 2;
+                wchar_t** new_lines = (wchar_t**)realloc(lines, new_cap * sizeof(wchar_t*));
+                if (!new_lines) break;
+                lines = new_lines;
+                cap = new_cap;
             }
-            lines[count++] = _wcsdup(buf);
+            wchar_t* dup = _wcsdup(buf);
+            if (dup) lines[count++] = dup;
         }
         if (!is_stdin && fp) fclose(fp);
 
         for (int i = count - 1; i >= 0; i--) {
-            wprintf(L"%ls\n", lines[i]);
-            free(lines[i]);
+            if (lines[i]) {
+                wprintf(L"%ls\n", lines[i]);
+                free(lines[i]);
+            }
         }
         free(lines);
     }
