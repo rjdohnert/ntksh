@@ -1,0 +1,317 @@
+PASS echo joins arguments and emits newline
+PASS echo -n suppresses newline
+PASS echo -e interprets escapes
+PASS print joins arguments and interprets escapes
+PASS print -n suppresses newline
+PASS print -r preserves backslashes
+PASS print -f formats output
+PASS print -u 2 writes to standard error
+PASS print -p reports unavailable coprocess support
+PASS let assigns and evaluates arithmetic
+PASS let returns failure for a zero expression
+PASS setvar assigns literal shell values
+PASS setvar rejects invalid variable names
+PASS printf formats strings and integers
+PASS printf formats floating point values
+PASS printf reuses format for extra arguments
+PASS printf %b interprets argument escapes
+PASS printf rejects unsafe %n conversion
+PASS eval reparses command text
+PASS command runs a builtin directly
+PASS command -v identifies builtins
+PASS type identifies builtins
+PASS aliases expand command words and retain arguments
+PASS aliases expand pipeline command words
+PASS alias -p prints reusable quoted definitions
+PASS unalias removes selected aliases
+PASS unalias -a clears all aliases
+PASS alias rejects recursive expansion safely
+PASS empty quoted argument is preserved
+PASS single quotes suppress variable expansion
+PASS true returns success
+PASS false returns failure
+PASS colon returns success
+PASS command mode initializes positional parameters
+PASS set and shift update positional parameters
+PASS set -e exits after an unhandled failed command
+PASS set -e does not exit for a failed command handled by ||
+PASS set -o enables and reports shell options
+PASS set +o emits reusable option commands
+PASS set -x traces expanded commands to standard error
+PASS set -u rejects references to unset variables
+PASS set +u disables unset-variable checks
+PASS set rejects unsupported shell options
+PASS set -n skips command execution in non-interactive shells
+PASS set -v echoes script lines to standard error
+PASS echo interprets backslash escapes by default
+PASS echo -E disables backslash escapes
+PASS quoted at-sign keeps positional parameters separate
+PASS quoted at-sign with no parameters produces no fields
+PASS set -C refuses to overwrite an existing file
+PASS kill -0 reports a live process without signalling it
+PASS kill -0 reports a missing process
+PASS dollar-dollar expands to a live process id
+PASS dollar-hyphen lists active option letters
+PASS dollar-bang is empty before any background job
+PASS bare ampersand runs the command in the background
+PASS bare ampersand sets dollar-bang
+PASS ampersand after redirection is not a job
+PASS start -b starts without a window and sets dollar-bang
+PASS LINENO is 1 for a -c command string
+PASS LINENO tracks the line number within a script
+PASS trap rejects an action without signal names
+PASS trap listing prints the re-enterable form
+PASS status parameter tracks the previous command
+PASS semicolon runs sequential commands
+PASS and-or lists short-circuit
+PASS test handles integer comparison
+PASS test honors boolean precedence and grouping
+PASS test handles quoted string ordering operators
+PASS test preserves empty string operand
+PASS test recognizes Windows character devices
+PASS test -t is false for redirected output
+PASS test reports malformed numeric expression
+PASS [ validates its closing bracket
+PASS pwd supports physical mode
+PASS pwd rejects unknown options
+PASS pushd and popd restore the previous directory
+PASS popd reports an empty directory stack
+PASS dir lists an explicit file
+PASS dir rejects excess operands
+PASS export rejects invalid names
+PASS setenv accepts name and value
+PASS setenv rejects conflicting value forms
+PASS unset rejects missing operands
+PASS unset rejects invalid names
+PASS readonly prevents updates and unsets
+PASS readonly -p lists read-only variables
+PASS typeset -l normalizes values to lowercase
+PASS typeset -u normalizes values to uppercase
+PASS typeset -i supports explicit integer bases
+PASS typeset -Z zero fills values to width
+PASS typeset -L and -R pad text in the requested direction
+PASS typeset -r makes a variable readonly
+PASS typeset rejects unknown attributes
+PASS typeset -p displays variable attributes
+PASS typeset -Z keeps negative signs before padding
+PASS typeset -a and set -A support indexed arrays
+PASS typeset -A and set -A support associative arrays
+PASS read splits input fields using IFS
+PASS read -r preserves backslashes
+PASS read -n limits characters
+PASS read -d uses the requested delimiter
+PASS read -A assigns an indexed array
+PASS read -a supports the indexed-array qualifier
+PASS read array mode requires a variable name
+PASS return outside a sourced script is rejected
+PASS getopts parses option clusters and required arguments
+PASS getopts supports silent option errors
+PASS getopts reports missing arguments in silent mode
+PASS umask prints a portable numeric value
+PASS umask prints symbolic permissions
+PASS umask rejects non-octal values
+PASS times prints self and child totals
+PASS ulimit -n changes and queries the CRT descriptor limit
+PASS ulimit -H and -S are mutually exclusive
+PASS ulimit -a lists resource limits
+PASS ulimit rejects options outside the target profiles
+PASS ulimit reports unsupported Windows resource enforcement
+PASS suspend requires force outside a job-control shell
+PASS suspend -f reports missing interactive console
+PASS unset -f removes only the named function
+PASS unset -v leaves a same-named function in place
+PASS unset without an option removes a function when no variable matches
+PASS unset rejects -f combined with -v
+FAIL command -p finds programs on the system path (exit=0, stdout=<C:\WINDOWS\system32\cmd.exe
+>, stderr=<>)
+FAIL command -p restores PATH afterwards (exit=0, stdout=<ksh: p=C:\Users\rjdohnert\AppData\Local\Microsoft\WindowsApps\Microsoft.PowerShell_8wekyb3d8bbwe;C:\Program: command not found or cannot execute
+same
+>, stderr=<>)
+PASS CDPATH resolves relative cd targets
+PASS CDPATH does not apply to explicit relative paths
+PASS PS4 replaces the xtrace prompt
+PASS kill -l lists only supported signals
+PASS kill -l maps a status to a signal name
+PASS kill rejects unknown signal names
+PASS kill reports POSIX-only signals as unsupported
+PASS suspend rejects unknown qualifiers
+PASS clear fails clearly when stdout is not a console
+PASS pause consumes redirected input
+PASS pause reports unavailable input
+PASS help displays built-in help
+PASS man is an alias for help
+PASS self-test runs the embedded regression checks
+PASS exit uses the low status byte
+PASS exit rejects excess operands without exiting
+PASS exit stops the rest of the command list
+PASS exec replaces the shell with a builtin command
+PASS exec with no command leaves the shell running
+PASS exec failure leaves the shell running
+PASS export, setenv, unset, cd, PWD, and OLDPWD state
+PASS export -p quotes literal dollar signs
+PASS pwd -L prints the logical shell directory
+PASS source executes in the current shell and return stops the sourced file
+PASS function definitions, arguments, return, and typeset -F
+PASS native batch expansion, control flow, call, and local scope
+PASS native FOR modifiers resolve PATH, size, time, and attributes
+PASS external batch commands use the native runtime
+PASS native BREAK, CHCP, COLOR, TITLE, and VOL commands
+PASS native TYPE expands tabs and ignores paging when redirected
+PASS RD /S prompts and preserves the tree on N
+PASS RD /S /Q recursively removes the named tree without prompting
+PASS DEL /A:H deletes only hidden files
+PASS DEL /A:-H selects files without the hidden attribute
+PASS COPY /-Y asks before overwriting and preserves data on N
+PASS COPY /A stops at Ctrl-Z and /V verifies the result
+PASS COPY /B /Z /V /N preserves binary data and verifies it
+PASS VERIFY ON applies verification to native COPY
+PASS MD creates missing intermediate directories
+PASS MD reports an already existing destination
+PASS IF defined, wildcard EXIST, /I, and CMDEXTVERSION
+PASS CMD blocks, ELSE IF, substrings, redirection, pipes, and FOR wildcards
+PASS UTF-16 batch scripts are decoded like CMD
+PASS OEM batch scripts are decoded like CMD
+PASS builtin output overwrite and append redirections
+PASS fc identical file comparison
+PASS find text in file with /N
+PASS findstr text in file with /N /I
+PASS tree directory hierarchy display with /A /F
+PASS kill -l signal enumeration
+PASS time /T query
+PASS date /T query
+PASS jobs status query
+PASS hash reset
+PASS prompt help
+PASS doskey help
+PASS mklink help
+PASS replace help
+PASS start help
+PASS assoc help
+PASS ftype help
+PASS ver command
+PASS verify command
+PASS cd help /?
+PASS builtin file management lifecycle (md, copy, ren, del, rd)
+PASS dirs query
+PASS sleep builtin
+PASS integer ksh builtin
+PASS basename with -a and -s
+PASS dirname extraction
+PASS uname query
+PASS which lookup
+PASS env and printenv integration
+PASS r repeat and substitution
+PASS seq generation
+PASS expr arithmetic
+PASS head pipeline
+PASS tail pipeline
+PASS wc line count
+PASS cat numbered output
+PASS where command resolution
+PASS whoami query
+PASS hostname query
+PASS sync filesystem flush
+PASS attrib query
+PASS cut field extraction
+PASS tr translation
+PASS sort text lines
+PASS uniq line filtering
+PASS touch file creation
+PASS yes repetition
+PASS paste file columns
+PASS fold line wrapping
+PASS expand tab conversion
+PASS unexpand space conversion
+PASS nl line numbering
+PASS readlink path canonicalization
+PASS realpath path resolution
+PASS id user/group query
+PASS logname query
+PASS tasklist process enumeration
+PASS taskkill help
+PASS mode query
+PASS more streaming
+PASS shutdown help
+PASS systeminfo query
+PASS subst query
+PASS grep case-insensitive match
+PASS grep invert match
+PASS grep count match
+PASS egrep regex alternation
+PASS fgrep fixed string match
+PASS sed substitution
+PASS awk line processing
+PASS diff unified difference
+PASS diff brief mode
+PASS find BSD directory search
+PASS date BSD format specifier
+PASS date BSD UTC query
+PASS ls directory listing
+PASS cp file copy
+PASS mv file rename
+PASS rm file removal
+PASS base64 encode
+PASS base64 decode
+PASS md5 checksum
+PASS sha256sum checksum
+PASS dos2unix conversion
+PASS unix2dos conversion
+PASS xargs command batching
+PASS ps process snapshot
+PASS pgrep pattern matching
+PASS du directory usage
+PASS df disk space report
+PASS stat file status
+PASS strings printable extraction
+PASS hexdump canonical dump
+PASS file type detection
+PASS comm common line extraction
+PASS join relational merge
+PASS split file partitioning
+PASS rev characterwise line reversal
+PASS tac reverse line streaming
+PASS shuf random permutation
+PASS sha512sum digest
+PASS cksum CRC computation
+PASS nproc processor count
+PASS cal calendar layout
+PASS factor prime factorization
+PASS uptime format query
+PASS free memory query
+PASS watch execution help
+PASS stty terminal size
+PASS column tabular formatting
+PASS truncate file resizing
+PASS dd block copy and conversion
+PASS colrm column stripping
+PASS install file copy and directory creation
+PASS uuidgen RFC 4122 v4 generation
+PASS gzip and gunzip roundtrip
+PASS sha384 message digest
+PASS 2>&1 and /dev/null redirection
+PASS array assignment and dynamic indexing
+PASS POSIX parameter expansions
+PASS categorized help sections (coreutils, scripting, batch)
+PASS command substitution $(cmd) and `cmd`
+PASS arithmetic expansion $(( expression ))
+PASS compound commands (for, while, if/then/elif/else/fi)
+PASS here-string and here-document redirection
+PASS globbing and wildcard unquoted expansion
+PASS case ... in ... esac compound pattern matching
+PASS batch CALL :label subroutine and GOTO :EOF
+PASS substring ${var:off:len} and replacement ${var//pat/rep}
+PASS trap commands on EXIT
+PASS subshell ( ... ) isolation and command grouping { ...; }
+PASS batch dynamic pseudo-variables and IF ERRORLEVEL
+PASS extended test [[ ... ]] with =~ regex, == wildcards, and && logic
+PASS pipeline failure tracking with set -o pipefail
+PASS ANSI-C quoting $'...' escape and hex expansion
+PASS C-style arithmetic loop for ((init; cond; step))
+PASS process substitution <(command) and >(command)
+PASS local function scope (local var and typeset var)
+PASS drive letter path translation (/c/... -> C:\...)
+PASS namerefs (typeset -n and nameref)
+PASS co-processes (|&, print -p, read -p)
+PASS floating-point arithmetic in $(( ... ))
+PASS compound variables var=( x=10 y=20 )
+Built-in regressions: 2 failed
