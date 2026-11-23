@@ -74,4 +74,41 @@ bool StrContainsW(const wchar_t* haystack, const wchar_t* needle, bool ignoreCas
 void FormatBytesHuman(unsigned __int64 bytes, wchar_t* out, size_t out_sz);
 bool Ksh_EvaluateArithmetic(IShell* shell, const wchar_t* expr, long long* out_int, double* out_float, bool* is_float);
 
+/* ========================================================================= */
+/* KshArena: Region / Arena Memory Management                                */
+/* ========================================================================= */
+typedef struct KshArenaBlock {
+    struct KshArenaBlock* next;
+    size_t capacity;
+    size_t used;
+} KshArenaBlock;
+
+typedef struct KshArena {
+    KshArenaBlock* blocks;
+    size_t default_block_size;
+} KshArena;
+
+KshArena* KshArena_Create(size_t default_block_size);
+void* KshArena_Alloc(KshArena* arena, size_t size);
+void* KshArena_Calloc(KshArena* arena, size_t count, size_t elem_size);
+wchar_t* KshArena_StrDup(KshArena* arena, const wchar_t* src);
+wchar_t* KshArena_StrNDup(KshArena* arena, const wchar_t* src, size_t len);
+void KshArena_Reset(KshArena* arena);
+void KshArena_Destroy(KshArena* arena);
+
+/* ========================================================================= */
+/* Long Path (Extended NT Path > MAX_PATH) Support                           */
+/* ========================================================================= */
+bool Ksh_IsExtendedPath(const wchar_t* path);
+bool Ksh_IsDevicePath(const wchar_t* path);
+wchar_t* Ksh_ToExtendedPath(const wchar_t* path, wchar_t* out_buf, size_t out_cap);
+HANDLE Ksh_CreateFile(const wchar_t* path, DWORD access, DWORD share,
+                      SECURITY_ATTRIBUTES* sa, DWORD creation, DWORD flags, HANDLE templateFile);
+DWORD Ksh_GetFileAttributes(const wchar_t* path);
+BOOL Ksh_SetFileAttributes(const wchar_t* path, DWORD attrs);
+BOOL Ksh_CreateDirectory(const wchar_t* path, SECURITY_ATTRIBUTES* sa);
+BOOL Ksh_RemoveDirectory(const wchar_t* path);
+BOOL Ksh_DeleteFile(const wchar_t* path);
+FILE* Ksh_OpenFile(const wchar_t* path, const wchar_t* mode, int shflag);
+
 #endif /* KSH_COMMON_H */

@@ -5,24 +5,30 @@
 #include <ksh/help.h>
 
 void FreeAST(CommandAST* cmd) {
-    while (cmd) {
-        CommandAST* next = cmd->next_in_pipeline;
-        for (int i = 0; i < cmd->argc; i++) {
-            free(cmd->argv[i]);
+    if (!cmd) return;
+    KshArena* arena = cmd->arena;
+    CommandAST* curr = cmd;
+    while (curr) {
+        CommandAST* next = curr->next_in_pipeline;
+        if (curr->in_redirect && curr->is_temp_in_redirect) {
+            Ksh_DeleteFile(curr->in_redirect);
         }
-        if (cmd->in_redirect) {
-            if (cmd->is_temp_in_redirect) {
-                _wremove(cmd->in_redirect);
+        if (!arena) {
+            for (int i = 0; i < curr->argc; i++) {
+                free(curr->argv[i]);
             }
-            free(cmd->in_redirect);
+            if (curr->in_redirect) free(curr->in_redirect);
+            if (curr->out_redirect) free(curr->out_redirect);
+            if (curr->err_redirect) free(curr->err_redirect);
+            for (int fd = 0; fd < KSH_FD_COUNT; fd++) {
+                free(curr->fds[fd].path);
+            }
+            free(curr);
         }
-        if (cmd->out_redirect) free(cmd->out_redirect);
-        if (cmd->err_redirect) free(cmd->err_redirect);
-        for (int fd = 0; fd < KSH_FD_COUNT; fd++) {
-            free(cmd->fds[fd].path);
-        }
-        free(cmd);
-        cmd = next;
+        curr = next;
+    }
+    if (arena) {
+        KshArena_Destroy(arena);
     }
 }
 
@@ -194,10 +200,10 @@ static bool CommandHasRedirect(const CommandAST* cmd) {
 static void SetFdRedirect(CommandAST* cmd, int fd, FdRedirectKind kind,
     wchar_t* path, int dupFrom) {
     if (fd < 0 || fd >= KSH_FD_COUNT) {
-        free(path);
+        if (!cmd->arena) free(path);
         return;
     }
-    free(cmd->fds[fd].path);
+    if (!cmd->arena) free(cmd->fds[fd].path);
     cmd->fds[fd].kind = kind;
     cmd->fds[fd].path = path;
     cmd->fds[fd].dupFrom = dupFrom;
@@ -222,11 +228,19 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
         return NULL;
     }
 
-    CommandAST* head = (CommandAST*)calloc(1, sizeof(CommandAST));
-    if (!head) {
+    KshArena* arena = KshArena_Create(65536);
+    if (!arena) {
         free(expanded);
         return NULL;
     }
+
+    CommandAST* head = (CommandAST*)KshArena_Calloc(arena, 1, sizeof(CommandAST));
+    if (!head) {
+        KshArena_Destroy(arena);
+        free(expanded);
+        return NULL;
+    }
+    head->arena = arena;
     CommandAST* curr = head;
 
     wchar_t token[MAX_LINE_LEN] = {0};
@@ -264,31 +278,31 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                 if (c == L'|' && expanded[i + 1] == L'|') {
                     if (token_started) {
                         token[tk_idx] = L'\0';
-                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(token))) goto parse_error;
+                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, token))) goto parse_error;
                         tk_idx = 0; token_started = false; token_was_quoted = false;
                     }
-                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(L"||"))) goto parse_error;
+                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, L"||"))) goto parse_error;
                     i++;
                     continue;
                 }
                 if (c == L'&' && expanded[i + 1] == L'&') {
                     if (token_started) {
                         token[tk_idx] = L'\0';
-                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(token))) goto parse_error;
+                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, token))) goto parse_error;
                         tk_idx = 0; token_started = false; token_was_quoted = false;
                     }
-                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(L"&&"))) goto parse_error;
+                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, L"&&"))) goto parse_error;
                     i++;
                     continue;
                 }
                 if (c == L'<' || c == L'>') {
                     if (token_started) {
                         token[tk_idx] = L'\0';
-                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(token))) goto parse_error;
+                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, token))) goto parse_error;
                         tk_idx = 0; token_started = false; token_was_quoted = false;
                     }
                     wchar_t opStr[2] = { c, L'\0' };
-                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(opStr))) goto parse_error;
+                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, opStr))) goto parse_error;
                     continue;
                 }
                 if (c == L'|') {
@@ -354,7 +368,7 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                                 if (CasePatternMatch(patternLeaf, wfd.cFileName)) {
                                     wchar_t full[MAX_PATH];
                                     swprintf_s(full, MAX_PATH, L"%ls%ls", dirPrefix, wfd.cFileName);
-                                    if (matchCount < MAX_ARGS) matches[matchCount++] = SafeStrDup(full);
+                                    if (matchCount < MAX_ARGS) matches[matchCount++] = KshArena_StrDup(arena, full);
                                 }
                             } while (FindNextFileW(hF, &wfd));
                             FindClose(hF);
@@ -364,8 +378,6 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                                     if (curr->argc < MAX_ARGS - 1) {
                                         curr->argv[curr->argc++] = matches[m];
                                         expandedGlob = true;
-                                    } else {
-                                        free(matches[m]);
                                     }
                                 }
                             }
@@ -373,7 +385,7 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                     }
                     if (!expandedGlob) {
                         if (curr->argc >= MAX_ARGS - 1 ||
-                            !(curr->argv[curr->argc] = SafeStrDup(token)))
+                            !(curr->argv[curr->argc] = KshArena_StrDup(arena, token)))
                             goto parse_error;
                         curr->argc++;
                     }
@@ -425,25 +437,25 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                         curr->out_to_err = true;
                         curr->out_to_err_before_err = (curr->err_redirect == NULL);
                     } else {
-                        wchar_t* redirect = SafeStrDup(fbuf);
+                        wchar_t* redirect = KshArena_StrDup(arena, fbuf);
                         if (!redirect) goto parse_error;
                         if (!bothStreams && (fd == 0 || fd >= 3)) {
                             SetFdRedirect(curr, fd,
                                 is_append ? FD_REDIRECT_APPEND : FD_REDIRECT_WRITE,
                                 redirect, -1);
                         } else if (bothStreams) {
-                            free(curr->out_redirect);
+                            if (!curr->arena) free(curr->out_redirect);
                             curr->out_redirect = redirect;
                             curr->append_out = is_append;
-                            free(curr->err_redirect);
-                            curr->err_redirect = SafeStrDup(fbuf);
+                            if (!curr->arena) free(curr->err_redirect);
+                            curr->err_redirect = KshArena_StrDup(arena, fbuf);
                             curr->append_err = is_append;
                         } else if (fd == 2) {
-                            free(curr->err_redirect);
+                            if (!curr->arena) free(curr->err_redirect);
                             curr->err_redirect = redirect;
                             curr->append_err = is_append;
                         } else {
-                            free(curr->out_redirect);
+                            if (!curr->arena) free(curr->out_redirect);
                             curr->out_redirect = redirect;
                             curr->append_out = is_append;
                         }
@@ -473,7 +485,7 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                         size_t filenamePosition = i + 1;
                         if (!ParseRedirectionFilename(expanded, &filenamePosition, fbuf, MAX_LINE_LEN))
                             goto parse_error;
-                        wchar_t* redirect = SafeStrDup(fbuf);
+                        wchar_t* redirect = KshArena_StrDup(arena, fbuf);
                         if (!redirect) goto parse_error;
                         SetFdRedirect(curr, fd, FD_REDIRECT_READ, redirect, -1);
                         i = filenamePosition - 1;
@@ -499,17 +511,17 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                             written = true;
                         }
                         if (written) {
-                            wchar_t* dupTemp = SafeStrDup(tempFile);
+                            wchar_t* dupTemp = KshArena_StrDup(arena, tempFile);
                             if (dupTemp) {
-                                free(curr->in_redirect);
+                                if (!curr->arena) free(curr->in_redirect);
                                 curr->in_redirect = dupTemp;
                                 curr->is_temp_in_redirect = true;
                             } else {
-                                _wremove(tempFile);
+                                Ksh_DeleteFile(tempFile);
                                 goto parse_error;
                             }
                         } else {
-                            _wremove(tempFile);
+                            Ksh_DeleteFile(tempFile);
                             goto parse_error;
                         }
                         i = filenamePosition - 1;
@@ -530,17 +542,17 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                             opened = true;
                         }
                         if (opened) {
-                            wchar_t* dupTemp = SafeStrDup(tempFile);
+                            wchar_t* dupTemp = KshArena_StrDup(arena, tempFile);
                             if (dupTemp) {
-                                free(curr->in_redirect);
+                                if (!curr->arena) free(curr->in_redirect);
                                 curr->in_redirect = dupTemp;
                                 curr->is_temp_in_redirect = true;
                             } else {
-                                _wremove(tempFile);
+                                Ksh_DeleteFile(tempFile);
                                 goto parse_error;
                             }
                         } else {
-                            _wremove(tempFile);
+                            Ksh_DeleteFile(tempFile);
                             goto parse_error;
                         }
                         i = filenamePosition - 1;
@@ -554,19 +566,24 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                     wchar_t* redirect = NULL;
                     bool redirectIsTemp = false;
                     if (HeredocIsRegistered(fbuf)) {
-                        redirect = HeredocExpandToTemp(self->env, fbuf);
-                        redirectIsTemp = redirect != NULL;
+                        wchar_t* htemp = HeredocExpandToTemp(self->env, fbuf);
+                        if (htemp) {
+                            redirect = KshArena_StrDup(arena, htemp);
+                            free(htemp);
+                            redirectIsTemp = true;
+                        }
                     }
-                    if (!redirect) redirect = SafeStrDup(fbuf);
+                    if (!redirect) redirect = KshArena_StrDup(arena, fbuf);
                     if (!redirect) goto parse_error;
-                    free(curr->in_redirect);
+                    if (!curr->arena) free(curr->in_redirect);
                     curr->in_redirect = redirect;
                     curr->is_temp_in_redirect = redirectIsTemp;
                     i = filenamePosition - 1;
                     continue;
                 } else if (c == L'|') {
-                    CommandAST* next_cmd = (CommandAST*)calloc(1, sizeof(CommandAST));
+                    CommandAST* next_cmd = (CommandAST*)KshArena_Calloc(arena, 1, sizeof(CommandAST));
                     if (!next_cmd) goto parse_error;
+                    next_cmd->arena = arena;
                     curr->next_in_pipeline = next_cmd;
                     curr = next_cmd;
                     continue;

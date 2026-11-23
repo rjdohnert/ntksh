@@ -37,6 +37,7 @@ typedef struct CommandAST {
     bool is_temp_in_redirect;
     FdRedirect fds[KSH_FD_COUNT];
     struct CommandAST* next_in_pipeline;
+    KshArena* arena;
 } CommandAST;
 
 void FreeAST(CommandAST* cmd);

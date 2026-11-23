@@ -109,8 +109,33 @@ int OpenWideDescriptor(const wchar_t* path, int flags, int mode) {
         path = L"NUL";
     }
     int descriptor = -1;
-    if (_wsopen_s(&descriptor, path, flags, _SH_DENYNO, mode) != 0)
+    if (wcslen(path) < MAX_PATH - 12 && !Ksh_IsExtendedPath(path)) {
+        if (_wsopen_s(&descriptor, path, flags, _SH_DENYNO, mode) == 0)
+            return descriptor;
+    }
+    /* Long path support via Ksh_CreateFile and _open_osfhandle */
+    DWORD access = 0;
+    DWORD creation = 0;
+    if ((flags & _O_RDWR) == _O_RDWR) {
+        access = GENERIC_READ | GENERIC_WRITE;
+    } else if (flags & _O_WRONLY) {
+        access = GENERIC_WRITE;
+    } else {
+        access = GENERIC_READ;
+    }
+    if (flags & _O_CREAT) {
+        creation = (flags & _O_EXCL) ? CREATE_NEW : ((flags & _O_TRUNC) ? CREATE_ALWAYS : OPEN_ALWAYS);
+    } else {
+        creation = (flags & _O_TRUNC) ? TRUNCATE_EXISTING : OPEN_EXISTING;
+    }
+    HANDLE h = Ksh_CreateFile(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                              creation, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    descriptor = _open_osfhandle((intptr_t)h, flags);
+    if (descriptor < 0) {
+        CloseHandle(h);
         return -1;
+    }
     return descriptor;
 }
 
@@ -130,7 +155,7 @@ static int BindHandleToDescriptor(HANDLE handle, int descriptor) {
 static bool NoclobberBlocks(IShell* shell, const wchar_t* path, bool append) {
     if (!shell->noclobber || append) return false;
     if (_wcsicmp(path, L"/dev/null") == 0 || _wcsicmp(path, L"nul") == 0) return false;
-    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return false;
+    if (Ksh_GetFileAttributes(path) == INVALID_FILE_ATTRIBUTES) return false;
     fwprintf(stderr, L"ksh: %ls: cannot overwrite existing file\n", path);
     return true;
 }
@@ -570,8 +595,8 @@ static int ExecuteSingleCommandCore(IShell* shell, CommandAST* cmd, HANDLE hIn, 
         if (cmd->out_redirect) {
             const wchar_t* outPath = cmd->out_redirect;
             if (_wcsicmp(outPath, L"/dev/null") == 0 || _wcsicmp(outPath, L"nul") == 0) outPath = L"NUL";
-            HANDLE h = CreateFileW(outPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                                   cmd->append_out ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            HANDLE h = Ksh_CreateFile(outPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                      cmd->append_out ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
             if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
         }
         return 0;
@@ -663,8 +688,8 @@ static int ExecuteSingleCommandCore(IShell* shell, CommandAST* cmd, HANDLE hIn, 
         if (_wcsicmp(inPath, L"/dev/null") == 0 || _wcsicmp(inPath, L"nul") == 0) {
             inPath = L"NUL";
         }
-        file_in = CreateFileW(inPath, GENERIC_READ, FILE_SHARE_READ, NULL,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        file_in = Ksh_CreateFile(inPath, GENERIC_READ, FILE_SHARE_READ, NULL,
+                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (file_in == INVALID_HANDLE_VALUE) {
             wprintf(L"ksh: cannot open %ls for input\n", cmd->in_redirect);
             return 1;
@@ -687,9 +712,9 @@ static int ExecuteSingleCommandCore(IShell* shell, CommandAST* cmd, HANDLE hIn, 
             if (file_in) CloseHandle(file_in);
             return 1;
         }
-        file_out = CreateFileW(outPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                               cmd->append_out ? OPEN_ALWAYS : CREATE_ALWAYS,
-                               FILE_ATTRIBUTE_NORMAL, NULL);
+        file_out = Ksh_CreateFile(outPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                  cmd->append_out ? OPEN_ALWAYS : CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, NULL);
         if (file_out == INVALID_HANDLE_VALUE) {
             wprintf(L"ksh: cannot open %ls for output\n", cmd->out_redirect);
             if (file_in) CloseHandle(file_in);
@@ -711,9 +736,9 @@ static int ExecuteSingleCommandCore(IShell* shell, CommandAST* cmd, HANDLE hIn, 
             if (file_out) CloseHandle(file_out);
             return 1;
         }
-        file_err = CreateFileW(errPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                               cmd->append_err ? OPEN_ALWAYS : CREATE_ALWAYS,
-                               FILE_ATTRIBUTE_NORMAL, NULL);
+        file_err = Ksh_CreateFile(errPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                  cmd->append_err ? OPEN_ALWAYS : CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, NULL);
         if (file_err == INVALID_HANDLE_VALUE) {
             wprintf(L"ksh: cannot open %ls for error output\n", cmd->err_redirect);
             if (file_in) CloseHandle(file_in);
@@ -810,7 +835,7 @@ static bool OpenRedirectTarget(IShell* shell, FdRedirectKind kind, const wchar_t
     DWORD access = kind == FD_REDIRECT_READ ? GENERIC_READ : GENERIC_WRITE;
     DWORD disposition = kind == FD_REDIRECT_READ ? OPEN_EXISTING :
         (kind == FD_REDIRECT_WRITE ? CREATE_ALWAYS : OPEN_ALWAYS);
-    HANDLE h = CreateFileW(target, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+    HANDLE h = Ksh_CreateFile(target, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
         disposition, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) {
         fwprintf(stderr, L"ksh: cannot open %ls\n", path);

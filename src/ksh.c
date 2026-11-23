@@ -92,6 +92,43 @@ bool StrContainsW(const wchar_t* haystack, const wchar_t* needle, bool ignoreCas
 void FormatBytesHuman(unsigned __int64 bytes, wchar_t* out, size_t out_sz);
 bool Ksh_EvaluateArithmetic(IShell* shell, const wchar_t* expr, long long* out_int, double* out_float, bool* is_float);
 
+/* ========================================================================= */
+/* KshArena: Region / Arena Memory Management                                */
+/* ========================================================================= */
+typedef struct KshArenaBlock {
+    struct KshArenaBlock* next;
+    size_t capacity;
+    size_t used;
+} KshArenaBlock;
+
+typedef struct KshArena {
+    KshArenaBlock* blocks;
+    size_t default_block_size;
+} KshArena;
+
+KshArena* KshArena_Create(size_t default_block_size);
+void* KshArena_Alloc(KshArena* arena, size_t size);
+void* KshArena_Calloc(KshArena* arena, size_t count, size_t elem_size);
+wchar_t* KshArena_StrDup(KshArena* arena, const wchar_t* src);
+wchar_t* KshArena_StrNDup(KshArena* arena, const wchar_t* src, size_t len);
+void KshArena_Reset(KshArena* arena);
+void KshArena_Destroy(KshArena* arena);
+
+/* ========================================================================= */
+/* Long Path (Extended NT Path > MAX_PATH) Support                           */
+/* ========================================================================= */
+bool Ksh_IsExtendedPath(const wchar_t* path);
+bool Ksh_IsDevicePath(const wchar_t* path);
+wchar_t* Ksh_ToExtendedPath(const wchar_t* path, wchar_t* out_buf, size_t out_cap);
+HANDLE Ksh_CreateFile(const wchar_t* path, DWORD access, DWORD share,
+                      SECURITY_ATTRIBUTES* sa, DWORD creation, DWORD flags, HANDLE templateFile);
+DWORD Ksh_GetFileAttributes(const wchar_t* path);
+BOOL Ksh_SetFileAttributes(const wchar_t* path, DWORD attrs);
+BOOL Ksh_CreateDirectory(const wchar_t* path, SECURITY_ATTRIBUTES* sa);
+BOOL Ksh_RemoveDirectory(const wchar_t* path);
+BOOL Ksh_DeleteFile(const wchar_t* path);
+FILE* Ksh_OpenFile(const wchar_t* path, const wchar_t* mode, int shflag);
+
 #endif /* KSH_COMMON_H */
 
 /* ========================================================================= */
@@ -136,6 +173,7 @@ typedef struct CommandAST {
     bool is_temp_in_redirect;
     FdRedirect fds[KSH_FD_COUNT];
     struct CommandAST* next_in_pipeline;
+    KshArena* arena;
 } CommandAST;
 
 void FreeAST(CommandAST* cmd);
@@ -916,6 +954,263 @@ typedef void (*KshModuleFiniFn)(void);
 /* ========================================================================= */
 
 
+/* ========================================================================= */
+/* KshArena: Region / Arena Memory Management                                */
+/* ========================================================================= */
+
+KshArena* KshArena_Create(size_t default_block_size) {
+    KshArena* arena = (KshArena*)malloc(sizeof(KshArena));
+    if (!arena) return NULL;
+    arena->default_block_size = default_block_size >= 1024 ? default_block_size : 65536;
+    arena->blocks = NULL;
+    return arena;
+}
+
+void* KshArena_Alloc(KshArena* arena, size_t size) {
+    if (!arena || size == 0) return NULL;
+    /* Align to 16 bytes for 64-bit alignment */
+    size_t aligned = (size + 15) & ~((size_t)15);
+
+    KshArenaBlock* b = arena->blocks;
+    if (b && b->used + aligned <= b->capacity) {
+        void* ptr = (void*)(((char*)(b + 1)) + b->used);
+        b->used += aligned;
+        return ptr;
+    }
+
+    size_t block_cap = arena->default_block_size;
+    if (aligned > block_cap) {
+        block_cap = aligned;
+    }
+    KshArenaBlock* new_block = (KshArenaBlock*)malloc(sizeof(KshArenaBlock) + block_cap);
+    if (!new_block) return NULL;
+    new_block->capacity = block_cap;
+    new_block->used = aligned;
+    new_block->next = arena->blocks;
+    arena->blocks = new_block;
+
+    return (void*)(new_block + 1);
+}
+
+void* KshArena_Calloc(KshArena* arena, size_t count, size_t elem_size) {
+    if (count == 0 || elem_size == 0) return NULL;
+    if (count > SIZE_MAX / elem_size) return NULL;
+    size_t total = count * elem_size;
+    void* ptr = KshArena_Alloc(arena, total);
+    if (ptr) memset(ptr, 0, total);
+    return ptr;
+}
+
+wchar_t* KshArena_StrDup(KshArena* arena, const wchar_t* src) {
+    if (!arena || !src) return NULL;
+    size_t len = wcslen(src);
+    wchar_t* dest = (wchar_t*)KshArena_Alloc(arena, (len + 1) * sizeof(wchar_t));
+    if (dest) {
+        memcpy(dest, src, (len + 1) * sizeof(wchar_t));
+    }
+    return dest;
+}
+
+wchar_t* KshArena_StrNDup(KshArena* arena, const wchar_t* src, size_t len) {
+    if (!arena || !src) return NULL;
+    wchar_t* dest = (wchar_t*)KshArena_Alloc(arena, (len + 1) * sizeof(wchar_t));
+    if (dest) {
+        memcpy(dest, src, len * sizeof(wchar_t));
+        dest[len] = L'\0';
+    }
+    return dest;
+}
+
+void KshArena_Reset(KshArena* arena) {
+    if (!arena) return;
+    for (KshArenaBlock* b = arena->blocks; b; b = b->next) {
+        b->used = 0;
+    }
+}
+
+void KshArena_Destroy(KshArena* arena) {
+    if (!arena) return;
+    KshArenaBlock* b = arena->blocks;
+    while (b) {
+        KshArenaBlock* next = b->next;
+        free(b);
+        b = next;
+    }
+    free(arena);
+}
+
+/* ========================================================================= */
+/* Long Path (Extended NT Path > MAX_PATH) Support                           */
+/* ========================================================================= */
+
+bool Ksh_IsExtendedPath(const wchar_t* path) {
+    if (!path) return false;
+    return (wcsncmp(path, L"\\\\?\\", 4) == 0 || wcsncmp(path, L"\\\\.\\", 4) == 0);
+}
+
+bool Ksh_IsDevicePath(const wchar_t* path) {
+    if (!path || !*path) return false;
+    const wchar_t* p = path;
+    if (_wcsicmp(p, L"NUL") == 0 || _wcsicmp(p, L"CON") == 0 ||
+        _wcsicmp(p, L"PRN") == 0 || _wcsicmp(p, L"AUX") == 0 ||
+        _wcsicmp(p, L"/dev/null") == 0 || _wcsicmp(p, L"/dev/tty") == 0) {
+        return true;
+    }
+    if ((_wcsnicmp(p, L"COM", 3) == 0 || _wcsnicmp(p, L"LPT", 3) == 0) &&
+        p[3] >= L'1' && p[3] <= L'9' && p[4] == L'\0') {
+        return true;
+    }
+    return false;
+}
+
+wchar_t* Ksh_ToExtendedPath(const wchar_t* path, wchar_t* out_buf, size_t out_cap) {
+    if (!path || !out_buf || out_cap < 8) return NULL;
+
+    /* Device names and already extended paths should not be modified */
+    if (Ksh_IsDevicePath(path) || Ksh_IsExtendedPath(path)) {
+        wcsncpy_s(out_buf, out_cap, path, _TRUNCATE);
+        return out_buf;
+    }
+
+    /* Resolve full path first to normalize relative segments and slashes */
+    wchar_t resolved[32768];
+    DWORD len = GetFullPathNameW(path, (DWORD)_countof(resolved), resolved, NULL);
+    if (len == 0 || len >= _countof(resolved)) {
+        wcsncpy_s(out_buf, out_cap, path, _TRUNCATE);
+        return out_buf;
+    }
+
+    /* Convert all forward slashes to backslashes */
+    for (DWORD k = 0; k < len; k++) {
+        if (resolved[k] == L'/') resolved[k] = L'\\';
+    }
+
+    /* If path length is below MAX_PATH - 12 and does not need \\?\, we can keep it as is */
+    if (len < MAX_PATH - 12) {
+        wcsncpy_s(out_buf, out_cap, resolved, _TRUNCATE);
+        return out_buf;
+    }
+
+    /* Format as extended NT path:
+       - UNC network path: \\server\share\... -> \\?\UNC\server\share\...
+       - Drive-letter path: C:\... -> \\?\C:\...
+    */
+    if (resolved[0] == L'\\' && resolved[1] == L'\\') {
+        swprintf_s(out_buf, out_cap, L"\\\\?\\UNC\\%ls", resolved + 2);
+    } else if (iswalpha(resolved[0]) && resolved[1] == L':' && resolved[2] == L'\\') {
+        swprintf_s(out_buf, out_cap, L"\\\\?\\%ls", resolved);
+    } else {
+        wcsncpy_s(out_buf, out_cap, resolved, _TRUNCATE);
+    }
+
+    return out_buf;
+}
+
+HANDLE Ksh_CreateFile(const wchar_t* path, DWORD access, DWORD share,
+                      SECURITY_ATTRIBUTES* sa, DWORD creation, DWORD flags, HANDLE templateFile) {
+    if (!path) return INVALID_HANDLE_VALUE;
+    if (_wcsicmp(path, L"/dev/null") == 0 || _wcsicmp(path, L"nul") == 0) {
+        return CreateFileW(L"NUL", access, share, sa, creation, flags, templateFile);
+    }
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    if (!target) target = path;
+    return CreateFileW(target, access, share, sa, creation, flags, templateFile);
+}
+
+DWORD Ksh_GetFileAttributes(const wchar_t* path) {
+    if (!path) return INVALID_FILE_ATTRIBUTES;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return GetFileAttributesW(target ? target : path);
+}
+
+BOOL Ksh_SetFileAttributes(const wchar_t* path, DWORD attrs) {
+    if (!path) return FALSE;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return SetFileAttributesW(target ? target : path, attrs);
+}
+
+BOOL Ksh_CreateDirectory(const wchar_t* path, SECURITY_ATTRIBUTES* sa) {
+    if (!path) return FALSE;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return CreateDirectoryW(target ? target : path, sa);
+}
+
+BOOL Ksh_RemoveDirectory(const wchar_t* path) {
+    if (!path) return FALSE;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return RemoveDirectoryW(target ? target : path);
+}
+
+BOOL Ksh_DeleteFile(const wchar_t* path) {
+    if (!path) return FALSE;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return DeleteFileW(target ? target : path);
+}
+
+FILE* Ksh_OpenFile(const wchar_t* path, const wchar_t* mode, int shflag) {
+    if (!path || !mode) return NULL;
+    size_t plen = wcslen(path);
+    /* For standard short paths, _wfsopen works directly */
+    if (plen < MAX_PATH - 12 && !Ksh_IsExtendedPath(path)) {
+        return _wfsopen(path, mode, shflag);
+    }
+
+    /* For extended / long paths, open via CreateFileW with extended prefix, then bridge to FILE* */
+    DWORD access = 0;
+    DWORD creation = 0;
+    if (wcschr(mode, L'r')) {
+        access = GENERIC_READ;
+        creation = OPEN_EXISTING;
+        if (wcschr(mode, L'+')) access |= GENERIC_WRITE;
+    } else if (wcschr(mode, L'w')) {
+        access = GENERIC_WRITE;
+        creation = CREATE_ALWAYS;
+        if (wcschr(mode, L'+')) access |= GENERIC_READ;
+    } else if (wcschr(mode, L'a')) {
+        access = GENERIC_WRITE;
+        creation = OPEN_ALWAYS;
+        if (wcschr(mode, L'+')) access |= GENERIC_READ;
+    } else {
+        return _wfsopen(path, mode, shflag);
+    }
+
+    DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+    if (shflag == _SH_DENYRW) share = 0;
+    else if (shflag == _SH_DENYWR) share = FILE_SHARE_READ;
+    else if (shflag == _SH_DENYRD) share = FILE_SHARE_WRITE;
+
+    HANDLE h = Ksh_CreateFile(path, access, share, NULL, creation, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return NULL;
+
+    int flags = (wcschr(mode, L'b') ? _O_BINARY : _O_TEXT);
+    if ((access & (GENERIC_READ | GENERIC_WRITE)) == (GENERIC_READ | GENERIC_WRITE)) flags |= _O_RDWR;
+    else if (access & GENERIC_WRITE) flags |= _O_WRONLY;
+    else flags |= _O_RDONLY;
+
+    int fd = _open_osfhandle((intptr_t)h, flags);
+    if (fd < 0) {
+        CloseHandle(h);
+        return NULL;
+    }
+
+    FILE* fp = _wfdopen(fd, mode);
+    if (!fp) {
+        _close(fd);
+        return NULL;
+    }
+
+    if (wcschr(mode, L'a')) {
+        _fseeki64(fp, 0, SEEK_END);
+    }
+
+    return fp;
+}
 
 wchar_t* SafeStrDup(const wchar_t* src) {
     if (!src) return NULL;
@@ -2924,24 +3219,30 @@ IEnvironment* CreateEnvironment(void) {
 
 
 void FreeAST(CommandAST* cmd) {
-    while (cmd) {
-        CommandAST* next = cmd->next_in_pipeline;
-        for (int i = 0; i < cmd->argc; i++) {
-            free(cmd->argv[i]);
+    if (!cmd) return;
+    KshArena* arena = cmd->arena;
+    CommandAST* curr = cmd;
+    while (curr) {
+        CommandAST* next = curr->next_in_pipeline;
+        if (curr->in_redirect && curr->is_temp_in_redirect) {
+            Ksh_DeleteFile(curr->in_redirect);
         }
-        if (cmd->in_redirect) {
-            if (cmd->is_temp_in_redirect) {
-                _wremove(cmd->in_redirect);
+        if (!arena) {
+            for (int i = 0; i < curr->argc; i++) {
+                free(curr->argv[i]);
             }
-            free(cmd->in_redirect);
+            if (curr->in_redirect) free(curr->in_redirect);
+            if (curr->out_redirect) free(curr->out_redirect);
+            if (curr->err_redirect) free(curr->err_redirect);
+            for (int fd = 0; fd < KSH_FD_COUNT; fd++) {
+                free(curr->fds[fd].path);
+            }
+            free(curr);
         }
-        if (cmd->out_redirect) free(cmd->out_redirect);
-        if (cmd->err_redirect) free(cmd->err_redirect);
-        for (int fd = 0; fd < KSH_FD_COUNT; fd++) {
-            free(cmd->fds[fd].path);
-        }
-        free(cmd);
-        cmd = next;
+        curr = next;
+    }
+    if (arena) {
+        KshArena_Destroy(arena);
     }
 }
 
@@ -3113,10 +3414,10 @@ static bool CommandHasRedirect(const CommandAST* cmd) {
 static void SetFdRedirect(CommandAST* cmd, int fd, FdRedirectKind kind,
     wchar_t* path, int dupFrom) {
     if (fd < 0 || fd >= KSH_FD_COUNT) {
-        free(path);
+        if (!cmd->arena) free(path);
         return;
     }
-    free(cmd->fds[fd].path);
+    if (!cmd->arena) free(cmd->fds[fd].path);
     cmd->fds[fd].kind = kind;
     cmd->fds[fd].path = path;
     cmd->fds[fd].dupFrom = dupFrom;
@@ -3141,11 +3442,19 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
         return NULL;
     }
 
-    CommandAST* head = (CommandAST*)calloc(1, sizeof(CommandAST));
-    if (!head) {
+    KshArena* arena = KshArena_Create(65536);
+    if (!arena) {
         free(expanded);
         return NULL;
     }
+
+    CommandAST* head = (CommandAST*)KshArena_Calloc(arena, 1, sizeof(CommandAST));
+    if (!head) {
+        KshArena_Destroy(arena);
+        free(expanded);
+        return NULL;
+    }
+    head->arena = arena;
     CommandAST* curr = head;
 
     wchar_t token[MAX_LINE_LEN] = {0};
@@ -3183,31 +3492,31 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                 if (c == L'|' && expanded[i + 1] == L'|') {
                     if (token_started) {
                         token[tk_idx] = L'\0';
-                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(token))) goto parse_error;
+                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, token))) goto parse_error;
                         tk_idx = 0; token_started = false; token_was_quoted = false;
                     }
-                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(L"||"))) goto parse_error;
+                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, L"||"))) goto parse_error;
                     i++;
                     continue;
                 }
                 if (c == L'&' && expanded[i + 1] == L'&') {
                     if (token_started) {
                         token[tk_idx] = L'\0';
-                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(token))) goto parse_error;
+                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, token))) goto parse_error;
                         tk_idx = 0; token_started = false; token_was_quoted = false;
                     }
-                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(L"&&"))) goto parse_error;
+                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, L"&&"))) goto parse_error;
                     i++;
                     continue;
                 }
                 if (c == L'<' || c == L'>') {
                     if (token_started) {
                         token[tk_idx] = L'\0';
-                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(token))) goto parse_error;
+                        if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, token))) goto parse_error;
                         tk_idx = 0; token_started = false; token_was_quoted = false;
                     }
                     wchar_t opStr[2] = { c, L'\0' };
-                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = SafeStrDup(opStr))) goto parse_error;
+                    if (curr->argc >= MAX_ARGS - 1 || !(curr->argv[curr->argc++] = KshArena_StrDup(arena, opStr))) goto parse_error;
                     continue;
                 }
                 if (c == L'|') {
@@ -3273,7 +3582,7 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                                 if (CasePatternMatch(patternLeaf, wfd.cFileName)) {
                                     wchar_t full[MAX_PATH];
                                     swprintf_s(full, MAX_PATH, L"%ls%ls", dirPrefix, wfd.cFileName);
-                                    if (matchCount < MAX_ARGS) matches[matchCount++] = SafeStrDup(full);
+                                    if (matchCount < MAX_ARGS) matches[matchCount++] = KshArena_StrDup(arena, full);
                                 }
                             } while (FindNextFileW(hF, &wfd));
                             FindClose(hF);
@@ -3283,8 +3592,6 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                                     if (curr->argc < MAX_ARGS - 1) {
                                         curr->argv[curr->argc++] = matches[m];
                                         expandedGlob = true;
-                                    } else {
-                                        free(matches[m]);
                                     }
                                 }
                             }
@@ -3292,7 +3599,7 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                     }
                     if (!expandedGlob) {
                         if (curr->argc >= MAX_ARGS - 1 ||
-                            !(curr->argv[curr->argc] = SafeStrDup(token)))
+                            !(curr->argv[curr->argc] = KshArena_StrDup(arena, token)))
                             goto parse_error;
                         curr->argc++;
                     }
@@ -3344,25 +3651,25 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                         curr->out_to_err = true;
                         curr->out_to_err_before_err = (curr->err_redirect == NULL);
                     } else {
-                        wchar_t* redirect = SafeStrDup(fbuf);
+                        wchar_t* redirect = KshArena_StrDup(arena, fbuf);
                         if (!redirect) goto parse_error;
                         if (!bothStreams && (fd == 0 || fd >= 3)) {
                             SetFdRedirect(curr, fd,
                                 is_append ? FD_REDIRECT_APPEND : FD_REDIRECT_WRITE,
                                 redirect, -1);
                         } else if (bothStreams) {
-                            free(curr->out_redirect);
+                            if (!curr->arena) free(curr->out_redirect);
                             curr->out_redirect = redirect;
                             curr->append_out = is_append;
-                            free(curr->err_redirect);
-                            curr->err_redirect = SafeStrDup(fbuf);
+                            if (!curr->arena) free(curr->err_redirect);
+                            curr->err_redirect = KshArena_StrDup(arena, fbuf);
                             curr->append_err = is_append;
                         } else if (fd == 2) {
-                            free(curr->err_redirect);
+                            if (!curr->arena) free(curr->err_redirect);
                             curr->err_redirect = redirect;
                             curr->append_err = is_append;
                         } else {
-                            free(curr->out_redirect);
+                            if (!curr->arena) free(curr->out_redirect);
                             curr->out_redirect = redirect;
                             curr->append_out = is_append;
                         }
@@ -3392,7 +3699,7 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                         size_t filenamePosition = i + 1;
                         if (!ParseRedirectionFilename(expanded, &filenamePosition, fbuf, MAX_LINE_LEN))
                             goto parse_error;
-                        wchar_t* redirect = SafeStrDup(fbuf);
+                        wchar_t* redirect = KshArena_StrDup(arena, fbuf);
                         if (!redirect) goto parse_error;
                         SetFdRedirect(curr, fd, FD_REDIRECT_READ, redirect, -1);
                         i = filenamePosition - 1;
@@ -3418,17 +3725,17 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                             written = true;
                         }
                         if (written) {
-                            wchar_t* dupTemp = SafeStrDup(tempFile);
+                            wchar_t* dupTemp = KshArena_StrDup(arena, tempFile);
                             if (dupTemp) {
-                                free(curr->in_redirect);
+                                if (!curr->arena) free(curr->in_redirect);
                                 curr->in_redirect = dupTemp;
                                 curr->is_temp_in_redirect = true;
                             } else {
-                                _wremove(tempFile);
+                                Ksh_DeleteFile(tempFile);
                                 goto parse_error;
                             }
                         } else {
-                            _wremove(tempFile);
+                            Ksh_DeleteFile(tempFile);
                             goto parse_error;
                         }
                         i = filenamePosition - 1;
@@ -3449,17 +3756,17 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                             opened = true;
                         }
                         if (opened) {
-                            wchar_t* dupTemp = SafeStrDup(tempFile);
+                            wchar_t* dupTemp = KshArena_StrDup(arena, tempFile);
                             if (dupTemp) {
-                                free(curr->in_redirect);
+                                if (!curr->arena) free(curr->in_redirect);
                                 curr->in_redirect = dupTemp;
                                 curr->is_temp_in_redirect = true;
                             } else {
-                                _wremove(tempFile);
+                                Ksh_DeleteFile(tempFile);
                                 goto parse_error;
                             }
                         } else {
-                            _wremove(tempFile);
+                            Ksh_DeleteFile(tempFile);
                             goto parse_error;
                         }
                         i = filenamePosition - 1;
@@ -3473,19 +3780,24 @@ static CommandAST* Parser_Parse(IParser* self, const wchar_t* raw_line) {
                     wchar_t* redirect = NULL;
                     bool redirectIsTemp = false;
                     if (HeredocIsRegistered(fbuf)) {
-                        redirect = HeredocExpandToTemp(self->env, fbuf);
-                        redirectIsTemp = redirect != NULL;
+                        wchar_t* htemp = HeredocExpandToTemp(self->env, fbuf);
+                        if (htemp) {
+                            redirect = KshArena_StrDup(arena, htemp);
+                            free(htemp);
+                            redirectIsTemp = true;
+                        }
                     }
-                    if (!redirect) redirect = SafeStrDup(fbuf);
+                    if (!redirect) redirect = KshArena_StrDup(arena, fbuf);
                     if (!redirect) goto parse_error;
-                    free(curr->in_redirect);
+                    if (!curr->arena) free(curr->in_redirect);
                     curr->in_redirect = redirect;
                     curr->is_temp_in_redirect = redirectIsTemp;
                     i = filenamePosition - 1;
                     continue;
                 } else if (c == L'|') {
-                    CommandAST* next_cmd = (CommandAST*)calloc(1, sizeof(CommandAST));
+                    CommandAST* next_cmd = (CommandAST*)KshArena_Calloc(arena, 1, sizeof(CommandAST));
                     if (!next_cmd) goto parse_error;
+                    next_cmd->arena = arena;
                     curr->next_in_pipeline = next_cmd;
                     curr = next_cmd;
                     continue;
@@ -3675,8 +3987,33 @@ int OpenWideDescriptor(const wchar_t* path, int flags, int mode) {
         path = L"NUL";
     }
     int descriptor = -1;
-    if (_wsopen_s(&descriptor, path, flags, _SH_DENYNO, mode) != 0)
+    if (wcslen(path) < MAX_PATH - 12 && !Ksh_IsExtendedPath(path)) {
+        if (_wsopen_s(&descriptor, path, flags, _SH_DENYNO, mode) == 0)
+            return descriptor;
+    }
+    /* Long path support via Ksh_CreateFile and _open_osfhandle */
+    DWORD access = 0;
+    DWORD creation = 0;
+    if ((flags & _O_RDWR) == _O_RDWR) {
+        access = GENERIC_READ | GENERIC_WRITE;
+    } else if (flags & _O_WRONLY) {
+        access = GENERIC_WRITE;
+    } else {
+        access = GENERIC_READ;
+    }
+    if (flags & _O_CREAT) {
+        creation = (flags & _O_EXCL) ? CREATE_NEW : ((flags & _O_TRUNC) ? CREATE_ALWAYS : OPEN_ALWAYS);
+    } else {
+        creation = (flags & _O_TRUNC) ? TRUNCATE_EXISTING : OPEN_EXISTING;
+    }
+    HANDLE h = Ksh_CreateFile(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                              creation, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    descriptor = _open_osfhandle((intptr_t)h, flags);
+    if (descriptor < 0) {
+        CloseHandle(h);
         return -1;
+    }
     return descriptor;
 }
 
@@ -3696,7 +4033,7 @@ static int BindHandleToDescriptor(HANDLE handle, int descriptor) {
 static bool NoclobberBlocks(IShell* shell, const wchar_t* path, bool append) {
     if (!shell->noclobber || append) return false;
     if (_wcsicmp(path, L"/dev/null") == 0 || _wcsicmp(path, L"nul") == 0) return false;
-    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return false;
+    if (Ksh_GetFileAttributes(path) == INVALID_FILE_ATTRIBUTES) return false;
     fwprintf(stderr, L"ksh: %ls: cannot overwrite existing file\n", path);
     return true;
 }
@@ -4136,8 +4473,8 @@ static int ExecuteSingleCommandCore(IShell* shell, CommandAST* cmd, HANDLE hIn, 
         if (cmd->out_redirect) {
             const wchar_t* outPath = cmd->out_redirect;
             if (_wcsicmp(outPath, L"/dev/null") == 0 || _wcsicmp(outPath, L"nul") == 0) outPath = L"NUL";
-            HANDLE h = CreateFileW(outPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                                   cmd->append_out ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            HANDLE h = Ksh_CreateFile(outPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                      cmd->append_out ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
             if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
         }
         return 0;
@@ -4229,8 +4566,8 @@ static int ExecuteSingleCommandCore(IShell* shell, CommandAST* cmd, HANDLE hIn, 
         if (_wcsicmp(inPath, L"/dev/null") == 0 || _wcsicmp(inPath, L"nul") == 0) {
             inPath = L"NUL";
         }
-        file_in = CreateFileW(inPath, GENERIC_READ, FILE_SHARE_READ, NULL,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        file_in = Ksh_CreateFile(inPath, GENERIC_READ, FILE_SHARE_READ, NULL,
+                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (file_in == INVALID_HANDLE_VALUE) {
             wprintf(L"ksh: cannot open %ls for input\n", cmd->in_redirect);
             return 1;
@@ -4253,9 +4590,9 @@ static int ExecuteSingleCommandCore(IShell* shell, CommandAST* cmd, HANDLE hIn, 
             if (file_in) CloseHandle(file_in);
             return 1;
         }
-        file_out = CreateFileW(outPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                               cmd->append_out ? OPEN_ALWAYS : CREATE_ALWAYS,
-                               FILE_ATTRIBUTE_NORMAL, NULL);
+        file_out = Ksh_CreateFile(outPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                  cmd->append_out ? OPEN_ALWAYS : CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, NULL);
         if (file_out == INVALID_HANDLE_VALUE) {
             wprintf(L"ksh: cannot open %ls for output\n", cmd->out_redirect);
             if (file_in) CloseHandle(file_in);
@@ -4277,9 +4614,9 @@ static int ExecuteSingleCommandCore(IShell* shell, CommandAST* cmd, HANDLE hIn, 
             if (file_out) CloseHandle(file_out);
             return 1;
         }
-        file_err = CreateFileW(errPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                               cmd->append_err ? OPEN_ALWAYS : CREATE_ALWAYS,
-                               FILE_ATTRIBUTE_NORMAL, NULL);
+        file_err = Ksh_CreateFile(errPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                  cmd->append_err ? OPEN_ALWAYS : CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, NULL);
         if (file_err == INVALID_HANDLE_VALUE) {
             wprintf(L"ksh: cannot open %ls for error output\n", cmd->err_redirect);
             if (file_in) CloseHandle(file_in);
@@ -4376,7 +4713,7 @@ static bool OpenRedirectTarget(IShell* shell, FdRedirectKind kind, const wchar_t
     DWORD access = kind == FD_REDIRECT_READ ? GENERIC_READ : GENERIC_WRITE;
     DWORD disposition = kind == FD_REDIRECT_READ ? OPEN_EXISTING :
         (kind == FD_REDIRECT_WRITE ? CREATE_ALWAYS : OPEN_ALWAYS);
-    HANDLE h = CreateFileW(target, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+    HANDLE h = Ksh_CreateFile(target, access, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
         disposition, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) {
         fwprintf(stderr, L"ksh: cannot open %ls\n", path);

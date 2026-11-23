@@ -4,6 +4,263 @@
 #include <ksh/builtins.h>
 #include <ksh/help.h>
 
+/* ========================================================================= */
+/* KshArena: Region / Arena Memory Management                                */
+/* ========================================================================= */
+
+KshArena* KshArena_Create(size_t default_block_size) {
+    KshArena* arena = (KshArena*)malloc(sizeof(KshArena));
+    if (!arena) return NULL;
+    arena->default_block_size = default_block_size >= 1024 ? default_block_size : 65536;
+    arena->blocks = NULL;
+    return arena;
+}
+
+void* KshArena_Alloc(KshArena* arena, size_t size) {
+    if (!arena || size == 0) return NULL;
+    /* Align to 16 bytes for 64-bit alignment */
+    size_t aligned = (size + 15) & ~((size_t)15);
+
+    KshArenaBlock* b = arena->blocks;
+    if (b && b->used + aligned <= b->capacity) {
+        void* ptr = (void*)(((char*)(b + 1)) + b->used);
+        b->used += aligned;
+        return ptr;
+    }
+
+    size_t block_cap = arena->default_block_size;
+    if (aligned > block_cap) {
+        block_cap = aligned;
+    }
+    KshArenaBlock* new_block = (KshArenaBlock*)malloc(sizeof(KshArenaBlock) + block_cap);
+    if (!new_block) return NULL;
+    new_block->capacity = block_cap;
+    new_block->used = aligned;
+    new_block->next = arena->blocks;
+    arena->blocks = new_block;
+
+    return (void*)(new_block + 1);
+}
+
+void* KshArena_Calloc(KshArena* arena, size_t count, size_t elem_size) {
+    if (count == 0 || elem_size == 0) return NULL;
+    if (count > SIZE_MAX / elem_size) return NULL;
+    size_t total = count * elem_size;
+    void* ptr = KshArena_Alloc(arena, total);
+    if (ptr) memset(ptr, 0, total);
+    return ptr;
+}
+
+wchar_t* KshArena_StrDup(KshArena* arena, const wchar_t* src) {
+    if (!arena || !src) return NULL;
+    size_t len = wcslen(src);
+    wchar_t* dest = (wchar_t*)KshArena_Alloc(arena, (len + 1) * sizeof(wchar_t));
+    if (dest) {
+        memcpy(dest, src, (len + 1) * sizeof(wchar_t));
+    }
+    return dest;
+}
+
+wchar_t* KshArena_StrNDup(KshArena* arena, const wchar_t* src, size_t len) {
+    if (!arena || !src) return NULL;
+    wchar_t* dest = (wchar_t*)KshArena_Alloc(arena, (len + 1) * sizeof(wchar_t));
+    if (dest) {
+        memcpy(dest, src, len * sizeof(wchar_t));
+        dest[len] = L'\0';
+    }
+    return dest;
+}
+
+void KshArena_Reset(KshArena* arena) {
+    if (!arena) return;
+    for (KshArenaBlock* b = arena->blocks; b; b = b->next) {
+        b->used = 0;
+    }
+}
+
+void KshArena_Destroy(KshArena* arena) {
+    if (!arena) return;
+    KshArenaBlock* b = arena->blocks;
+    while (b) {
+        KshArenaBlock* next = b->next;
+        free(b);
+        b = next;
+    }
+    free(arena);
+}
+
+/* ========================================================================= */
+/* Long Path (Extended NT Path > MAX_PATH) Support                           */
+/* ========================================================================= */
+
+bool Ksh_IsExtendedPath(const wchar_t* path) {
+    if (!path) return false;
+    return (wcsncmp(path, L"\\\\?\\", 4) == 0 || wcsncmp(path, L"\\\\.\\", 4) == 0);
+}
+
+bool Ksh_IsDevicePath(const wchar_t* path) {
+    if (!path || !*path) return false;
+    const wchar_t* p = path;
+    if (_wcsicmp(p, L"NUL") == 0 || _wcsicmp(p, L"CON") == 0 ||
+        _wcsicmp(p, L"PRN") == 0 || _wcsicmp(p, L"AUX") == 0 ||
+        _wcsicmp(p, L"/dev/null") == 0 || _wcsicmp(p, L"/dev/tty") == 0) {
+        return true;
+    }
+    if ((_wcsnicmp(p, L"COM", 3) == 0 || _wcsnicmp(p, L"LPT", 3) == 0) &&
+        p[3] >= L'1' && p[3] <= L'9' && p[4] == L'\0') {
+        return true;
+    }
+    return false;
+}
+
+wchar_t* Ksh_ToExtendedPath(const wchar_t* path, wchar_t* out_buf, size_t out_cap) {
+    if (!path || !out_buf || out_cap < 8) return NULL;
+
+    /* Device names and already extended paths should not be modified */
+    if (Ksh_IsDevicePath(path) || Ksh_IsExtendedPath(path)) {
+        wcsncpy_s(out_buf, out_cap, path, _TRUNCATE);
+        return out_buf;
+    }
+
+    /* Resolve full path first to normalize relative segments and slashes */
+    wchar_t resolved[32768];
+    DWORD len = GetFullPathNameW(path, (DWORD)_countof(resolved), resolved, NULL);
+    if (len == 0 || len >= _countof(resolved)) {
+        wcsncpy_s(out_buf, out_cap, path, _TRUNCATE);
+        return out_buf;
+    }
+
+    /* Convert all forward slashes to backslashes */
+    for (DWORD k = 0; k < len; k++) {
+        if (resolved[k] == L'/') resolved[k] = L'\\';
+    }
+
+    /* If path length is below MAX_PATH - 12 and does not need \\?\, we can keep it as is */
+    if (len < MAX_PATH - 12) {
+        wcsncpy_s(out_buf, out_cap, resolved, _TRUNCATE);
+        return out_buf;
+    }
+
+    /* Format as extended NT path:
+       - UNC network path: \\server\share\... -> \\?\UNC\server\share\...
+       - Drive-letter path: C:\... -> \\?\C:\...
+    */
+    if (resolved[0] == L'\\' && resolved[1] == L'\\') {
+        swprintf_s(out_buf, out_cap, L"\\\\?\\UNC\\%ls", resolved + 2);
+    } else if (iswalpha(resolved[0]) && resolved[1] == L':' && resolved[2] == L'\\') {
+        swprintf_s(out_buf, out_cap, L"\\\\?\\%ls", resolved);
+    } else {
+        wcsncpy_s(out_buf, out_cap, resolved, _TRUNCATE);
+    }
+
+    return out_buf;
+}
+
+HANDLE Ksh_CreateFile(const wchar_t* path, DWORD access, DWORD share,
+                      SECURITY_ATTRIBUTES* sa, DWORD creation, DWORD flags, HANDLE templateFile) {
+    if (!path) return INVALID_HANDLE_VALUE;
+    if (_wcsicmp(path, L"/dev/null") == 0 || _wcsicmp(path, L"nul") == 0) {
+        return CreateFileW(L"NUL", access, share, sa, creation, flags, templateFile);
+    }
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    if (!target) target = path;
+    return CreateFileW(target, access, share, sa, creation, flags, templateFile);
+}
+
+DWORD Ksh_GetFileAttributes(const wchar_t* path) {
+    if (!path) return INVALID_FILE_ATTRIBUTES;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return GetFileAttributesW(target ? target : path);
+}
+
+BOOL Ksh_SetFileAttributes(const wchar_t* path, DWORD attrs) {
+    if (!path) return FALSE;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return SetFileAttributesW(target ? target : path, attrs);
+}
+
+BOOL Ksh_CreateDirectory(const wchar_t* path, SECURITY_ATTRIBUTES* sa) {
+    if (!path) return FALSE;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return CreateDirectoryW(target ? target : path, sa);
+}
+
+BOOL Ksh_RemoveDirectory(const wchar_t* path) {
+    if (!path) return FALSE;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return RemoveDirectoryW(target ? target : path);
+}
+
+BOOL Ksh_DeleteFile(const wchar_t* path) {
+    if (!path) return FALSE;
+    wchar_t extBuf[32768];
+    const wchar_t* target = Ksh_ToExtendedPath(path, extBuf, _countof(extBuf));
+    return DeleteFileW(target ? target : path);
+}
+
+FILE* Ksh_OpenFile(const wchar_t* path, const wchar_t* mode, int shflag) {
+    if (!path || !mode) return NULL;
+    size_t plen = wcslen(path);
+    /* For standard short paths, _wfsopen works directly */
+    if (plen < MAX_PATH - 12 && !Ksh_IsExtendedPath(path)) {
+        return _wfsopen(path, mode, shflag);
+    }
+
+    /* For extended / long paths, open via CreateFileW with extended prefix, then bridge to FILE* */
+    DWORD access = 0;
+    DWORD creation = 0;
+    if (wcschr(mode, L'r')) {
+        access = GENERIC_READ;
+        creation = OPEN_EXISTING;
+        if (wcschr(mode, L'+')) access |= GENERIC_WRITE;
+    } else if (wcschr(mode, L'w')) {
+        access = GENERIC_WRITE;
+        creation = CREATE_ALWAYS;
+        if (wcschr(mode, L'+')) access |= GENERIC_READ;
+    } else if (wcschr(mode, L'a')) {
+        access = GENERIC_WRITE;
+        creation = OPEN_ALWAYS;
+        if (wcschr(mode, L'+')) access |= GENERIC_READ;
+    } else {
+        return _wfsopen(path, mode, shflag);
+    }
+
+    DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+    if (shflag == _SH_DENYRW) share = 0;
+    else if (shflag == _SH_DENYWR) share = FILE_SHARE_READ;
+    else if (shflag == _SH_DENYRD) share = FILE_SHARE_WRITE;
+
+    HANDLE h = Ksh_CreateFile(path, access, share, NULL, creation, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return NULL;
+
+    int flags = (wcschr(mode, L'b') ? _O_BINARY : _O_TEXT);
+    if ((access & (GENERIC_READ | GENERIC_WRITE)) == (GENERIC_READ | GENERIC_WRITE)) flags |= _O_RDWR;
+    else if (access & GENERIC_WRITE) flags |= _O_WRONLY;
+    else flags |= _O_RDONLY;
+
+    int fd = _open_osfhandle((intptr_t)h, flags);
+    if (fd < 0) {
+        CloseHandle(h);
+        return NULL;
+    }
+
+    FILE* fp = _wfdopen(fd, mode);
+    if (!fp) {
+        _close(fd);
+        return NULL;
+    }
+
+    if (wcschr(mode, L'a')) {
+        _fseeki64(fp, 0, SEEK_END);
+    }
+
+    return fp;
+}
 
 wchar_t* SafeStrDup(const wchar_t* src) {
     if (!src) return NULL;
