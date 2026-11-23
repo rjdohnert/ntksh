@@ -31297,8 +31297,9 @@ static void DiffFreeLines(wchar_t** lines, size_t count) {
 static DiffEdit* DiffBuildEdits(wchar_t* const* lines1, size_t count1,
                                 wchar_t* const* lines2, size_t count2,
                                 const DiffOpts* opts, size_t* out_nedits) {
-    size_t matrix_size = (count1 + 1) * (count2 + 1);
-    int* dp = (matrix_size > 0 && matrix_size <= 4000000) ? (int*)malloc(matrix_size * sizeof(int)) : NULL;
+    bool can_dp = (count1 <= 2000 && count2 <= 2000);
+    size_t matrix_size = can_dp ? (count1 + 1) * (count2 + 1) : 0;
+    int* dp = can_dp ? (int*)malloc(matrix_size * sizeof(int)) : NULL;
 
     size_t cap = count1 + count2 + 16;
     size_t nedits = 0;
@@ -31326,7 +31327,14 @@ static DiffEdit* DiffBuildEdits(wchar_t* const* lines1, size_t count1,
         while (i < count1 || j < count2) {
             if (nedits + 2 >= cap) {
                 cap *= 2;
-                edits = (DiffEdit*)realloc(edits, cap * sizeof(DiffEdit));
+                DiffEdit* new_edits = (DiffEdit*)realloc(edits, cap * sizeof(DiffEdit));
+                if (!new_edits) {
+                    free(dp);
+                    free(edits);
+                    *out_nedits = 0;
+                    return NULL;
+                }
+                edits = new_edits;
             }
             if (i < count1 && j < count2) {
                 if (DiffLinesMatch(lines1[i], lines2[j], opts)) {
@@ -31379,7 +31387,13 @@ static DiffEdit* DiffBuildEdits(wchar_t* const* lines1, size_t count1,
         while (i < count1 || j < count2) {
             if (nedits + 4 >= cap) {
                 cap *= 2;
-                edits = (DiffEdit*)realloc(edits, cap * sizeof(DiffEdit));
+                DiffEdit* new_edits = (DiffEdit*)realloc(edits, cap * sizeof(DiffEdit));
+                if (!new_edits) {
+                    free(edits);
+                    *out_nedits = 0;
+                    return NULL;
+                }
+                edits = new_edits;
             }
             if (i < count1 && j < count2) {
                 if (DiffLinesMatch(lines1[i], lines2[j], opts)) {
@@ -37642,7 +37656,12 @@ static void FormatParagraph(wchar_t** lines, size_t line_count, const FmtConfig*
                 word[wlen] = L'\0';
                 if (wcount >= cap) {
                     cap *= 2;
-                    words = (wchar_t**)realloc(words, cap * sizeof(wchar_t*));
+                    wchar_t** new_words = (wchar_t**)realloc(words, cap * sizeof(wchar_t*));
+                    if (!new_words) {
+                        free(word);
+                        break;
+                    }
+                    words = new_words;
                 }
                 words[wcount++] = word;
             }
@@ -37713,9 +37732,16 @@ static void ProcessFmtStream(FILE* fp, const FmtConfig* cfg) {
 
         if (count >= cap) {
             cap *= 2;
-            para = (wchar_t**)realloc(para, cap * sizeof(wchar_t*));
+            wchar_t** new_para = (wchar_t**)realloc(para, cap * sizeof(wchar_t*));
+            if (!new_para) {
+                break;
+            }
+            para = new_para;
         }
-        para[count++] = _wcsdup(line);
+        wchar_t* dup = _wcsdup(line);
+        if (dup) {
+            para[count++] = dup;
+        }
     }
 
     if (count > 0) {
@@ -37817,7 +37843,9 @@ typedef struct {
 
 static bool CsplitWriteSection(CsplitWriter* cw, size_t from, size_t to) {
     wchar_t out_name[MAX_PATH];
-    swprintf(out_name, sizeof(out_name) / sizeof(out_name[0]), L"%ls%0*d", cw->prefix, cw->digits, cw->file_num++);
+    if (swprintf_s(out_name, _countof(out_name), L"%ls%0*d", cw->prefix, cw->digits, cw->file_num++) < 0) {
+        return false;
+    }
     FILE* out = _wfsopen(out_name, L"w", _SH_DENYWR);
     if (!out) return false;
 
@@ -37869,9 +37897,11 @@ bool Builtin_Csplit(CommandAST* cmd, int* code) {
         } else if (wcscmp(opt, L"-n") == 0 && arg_idx + 1 < cmd->argc) {
             digits = (int)wcstol(cmd->argv[++arg_idx], NULL, 10);
             if (digits < 1) digits = 2;
+            if (digits > 16) digits = 16;
         } else if (wcsncmp(opt, L"-n", 2) == 0) {
             digits = (int)wcstol(opt + 2, NULL, 10);
             if (digits < 1) digits = 2;
+            if (digits > 16) digits = 16;
         } else {
             break;
         }
@@ -37895,13 +37925,25 @@ bool Builtin_Csplit(CommandAST* cmd, int* code) {
     /* Read all lines */
     size_t cap = 512, total_lines = 0;
     wchar_t** lines = (wchar_t**)malloc(cap * sizeof(wchar_t*));
+    if (!lines) {
+        if (fp != stdin) fclose(fp);
+        *code = 1;
+        return true;
+    }
     wchar_t buf[8192];
     while (fgetws(buf, sizeof(buf) / sizeof(buf[0]), fp)) {
         if (total_lines >= cap) {
             cap *= 2;
-            lines = (wchar_t**)realloc(lines, cap * sizeof(wchar_t*));
+            wchar_t** new_lines = (wchar_t**)realloc(lines, cap * sizeof(wchar_t*));
+            if (!new_lines) {
+                break;
+            }
+            lines = new_lines;
         }
-        lines[total_lines++] = _wcsdup(buf);
+        wchar_t* dup = _wcsdup(buf);
+        if (dup) {
+            lines[total_lines++] = dup;
+        }
     }
     if (fp != stdin) fclose(fp);
 
@@ -37955,7 +37997,8 @@ bool Builtin_Csplit(CommandAST* cmd, int* code) {
                 if (!end_delim) { error_occurred = true; break; }
 
                 size_t re_len = end_delim - (pat + 1);
-                wchar_t re_str[512];
+                wchar_t* re_str = (wchar_t*)malloc((re_len + 1) * sizeof(wchar_t));
+                if (!re_str) { error_occurred = true; break; }
                 wcsncpy(re_str, pat + 1, re_len);
                 re_str[re_len] = L'\0';
 
@@ -37972,6 +38015,7 @@ bool Builtin_Csplit(CommandAST* cmd, int* code) {
                         break;
                     }
                 }
+                free(re_str);
 
                 if (match_line == total_lines) {
                     if (repeat_inf) break;
@@ -38118,7 +38162,7 @@ bool Builtin_Chmod(CommandAST* cmd, int* code) {
         ctx.octal_mode = (int)wcstol(mode_str, NULL, 8);
     } else {
         ctx.is_octal = false;
-        wcsncpy(ctx.symbolic_mode, mode_str, 63);
+        wcsncpy_s(ctx.symbolic_mode, _countof(ctx.symbolic_mode), mode_str, _TRUNCATE);
     }
 
     for (int i = arg_idx; i < cmd->argc; i++) {
@@ -38255,9 +38299,9 @@ bool Builtin_Chown(CommandAST* cmd, int* code) {
 
     if (colon) {
         *colon = L'\0';
-        wcsncpy(ctx.group_name, colon + 1, 127);
+        wcsncpy_s(ctx.group_name, _countof(ctx.group_name), colon + 1, _TRUNCATE);
     }
-    wcsncpy(ctx.owner_name, user_buf, 127);
+    wcsncpy_s(ctx.owner_name, _countof(ctx.owner_name), user_buf, _TRUNCATE);
 
     BYTE sidBufferOwner[SECURITY_MAX_SID_SIZE];
     BYTE sidBufferGroup[SECURITY_MAX_SID_SIZE];
@@ -38605,7 +38649,15 @@ bool Builtin_Rs(CommandAST* cmd, int* code) {
                 if (item) {
                     wcsncpy(item, start, wlen);
                     item[wlen] = L'\0';
-                    if (count >= cap) { cap *= 2; items = (wchar_t**)realloc(items, cap * sizeof(wchar_t*)); }
+                    if (count >= cap) {
+                        cap *= 2;
+                        wchar_t** new_items = (wchar_t**)realloc(items, cap * sizeof(wchar_t*));
+                        if (!new_items) {
+                            free(item);
+                            break;
+                        }
+                        items = new_items;
+                    }
                     items[count++] = item;
                 }
             }
@@ -38636,6 +38688,9 @@ bool Builtin_Rs(CommandAST* cmd, int* code) {
         rows = (int)((count + cols - 1) / cols);
     }
 
+    if (cols < 1) cols = 1;
+    if (rows < 1) rows = 1;
+
     if (transpose) {
         int tmp = rows;
         rows = cols;
@@ -38644,6 +38699,12 @@ bool Builtin_Rs(CommandAST* cmd, int* code) {
 
     /* Compute column widths */
     int* col_widths = (int*)calloc(cols, sizeof(int));
+    if (!col_widths) {
+        for (size_t i = 0; i < count; i++) free(items[i]);
+        free(items);
+        *code = 1;
+        return true;
+    }
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
             size_t idx = transpose ? (size_t)(c * rows + r) : (size_t)(r * cols + c);
@@ -38978,11 +39039,12 @@ static int TsortFindOrAdd(TsortGraph* g, const wchar_t* name) {
     }
     if (g->count >= g->cap) {
         g->cap = (g->cap == 0) ? 64 : g->cap * 2;
-        g->nodes = (TsortNode*)realloc(g->nodes, g->cap * sizeof(TsortNode));
+        TsortNode* new_nodes = (TsortNode*)realloc(g->nodes, g->cap * sizeof(TsortNode));
+        if (!new_nodes) return -1;
+        g->nodes = new_nodes;
     }
     int idx = g->count++;
-    wcsncpy(g->nodes[idx].name, name, 255);
-    g->nodes[idx].name[255] = L'\0';
+    wcsncpy_s(g->nodes[idx].name, _countof(g->nodes[idx].name), name, _TRUNCATE);
     g->nodes[idx].in_degree = 0;
     g->nodes[idx].successors = NULL;
     g->nodes[idx].succ_count = 0;
@@ -38991,14 +39053,16 @@ static int TsortFindOrAdd(TsortGraph* g, const wchar_t* name) {
 }
 
 static void TsortAddEdge(TsortGraph* g, int from, int to) {
-    if (from == to) return;
+    if (from < 0 || to < 0 || from == to) return;
     TsortNode* fn = &g->nodes[from];
     for (int i = 0; i < fn->succ_count; i++) {
         if (fn->successors[i] == to) return;
     }
     if (fn->succ_count >= fn->succ_cap) {
         fn->succ_cap = (fn->succ_cap == 0) ? 8 : fn->succ_cap * 2;
-        fn->successors = (int*)realloc(fn->successors, fn->succ_cap * sizeof(int));
+        int* new_succ = (int*)realloc(fn->successors, fn->succ_cap * sizeof(int));
+        if (!new_succ) return;
+        fn->successors = new_succ;
     }
     fn->successors[fn->succ_count++] = to;
     g->nodes[to].in_degree++;
@@ -39369,7 +39433,7 @@ bool Builtin_Patch(CommandAST* cmd, int* code) {
             wchar_t* nl = wcschr(plines[i] + 4, L'\n');
             if (nl) *nl = L'\0';
             orig_file = StripPath(plines[i] + 4, p_strip);
-            wcsncpy(detected_file, orig_file, MAX_PATH - 1);
+            wcsncpy_s(detected_file, _countof(detected_file), orig_file, _TRUNCATE);
             orig_file = detected_file;
             break;
         }
@@ -39536,6 +39600,43 @@ static void FormatOctal(char* dst, size_t size, unsigned __int64 val) {
 static bool MatchPattern(const wchar_t* pat, const wchar_t* str) {
     if (!pat || !*pat || wcscmp(pat, L"*") == 0) return true;
     return wcsstr(str, pat) != NULL;
+}
+
+static bool TarIsPathSafe(const wchar_t* path) {
+    if (!path || !*path) return false;
+    /* Reject absolute paths: leading slash or backslash */
+    if (path[0] == L'/' || path[0] == L'\\') return false;
+    /* Reject drive letters: C: etc */
+    if (((path[0] >= L'a' && path[0] <= L'z') || (path[0] >= L'A' && path[0] <= L'Z')) && path[1] == L':') return false;
+    /* Reject directory traversal with .. */
+    const wchar_t* p = path;
+    while (*p) {
+        if (p[0] == L'.' && p[1] == L'.') {
+            if (p == path || p[-1] == L'/' || p[-1] == L'\\') {
+                if (p[2] == L'\0' || p[2] == L'/' || p[2] == L'\\') {
+                    return false;
+                }
+            }
+        }
+        p++;
+    }
+    return true;
+}
+
+static void TarEnsureParentDirs(const wchar_t* path) {
+    wchar_t buf[MAX_PATH];
+    wcsncpy_s(buf, _countof(buf), path, _TRUNCATE);
+    wchar_t* p = buf;
+    while (*p) {
+        if (*p == L'/' || *p == L'\\') {
+            *p = L'\0';
+            if (buf[0] != L'\0' && wcscmp(buf, L".") != 0 && wcscmp(buf, L"..") != 0 && !(buf[1] == L':' && buf[2] == L'\0')) {
+                CreateDirectoryW(buf, NULL);
+            }
+            *p = L'\\';
+        }
+        p++;
+    }
 }
 
 static void PaxCopyTree(const wchar_t* src, const wchar_t* dst, bool verbose, bool newer_only) {
@@ -39729,11 +39830,20 @@ bool Builtin_Pax(IShell* shell, CommandAST* cmd, int* code) {
     while (fread(&hdr, 1, sizeof(hdr), rfp) == sizeof(hdr)) {
         if (hdr.name[0] == '\0') break;
 
-        wchar_t wname[MAX_PATH];
-        mbstowcs(wname, hdr.name, sizeof(wname) / sizeof(wname[0]) - 1);
+        char name_buf[101] = {0};
+        memcpy(name_buf, hdr.name, sizeof(hdr.name));
+        name_buf[sizeof(hdr.name)] = '\0';
 
+        wchar_t wname[MAX_PATH] = {0};
+        size_t conv = mbstowcs(wname, name_buf, _countof(wname) - 1);
+        if (conv == (size_t)-1) conv = 0;
+        wname[conv < _countof(wname) ? conv : _countof(wname) - 1] = L'\0';
+
+        char size_buf[13] = {0};
+        memcpy(size_buf, hdr.size, sizeof(hdr.size));
+        size_buf[sizeof(hdr.size)] = '\0';
         unsigned __int64 fsize = 0;
-        sscanf(hdr.size, "%llo", &fsize);
+        sscanf_s(size_buf, "%llo", &fsize);
 
         bool matched = true;
         if (arg_start < cmd->argc) {
@@ -39745,9 +39855,15 @@ bool Builtin_Pax(IShell* shell, CommandAST* cmd, int* code) {
 
         if (mode_r && matched) {
             /* Extraction mode */
-            if (keep_existing && GetFileAttributesW(wname) != INVALID_FILE_ATTRIBUTES) {
-                /* skip */
+            if (!TarIsPathSafe(wname)) {
+                fwprintf(stderr, L"pax: skipping unsafe path: %ls\n", wname);
+                unsigned __int64 blocks = (fsize + 511) / 512;
+                _fseeki64(rfp, blocks * 512, SEEK_CUR);
+            } else if (keep_existing && GetFileAttributesW(wname) != INVALID_FILE_ATTRIBUTES) {
+                unsigned __int64 blocks = (fsize + 511) / 512;
+                _fseeki64(rfp, blocks * 512, SEEK_CUR);
             } else {
+                TarEnsureParentDirs(wname);
                 FILE* out = _wfsopen(wname, L"wb", _SH_DENYWR);
                 unsigned __int64 rem = fsize;
                 char buf[512];
@@ -39773,22 +39889,6 @@ bool Builtin_Pax(IShell* shell, CommandAST* cmd, int* code) {
     if (rfp != stdin) fclose(rfp);
     *code = 0;
     return true;
-}
-
-static void TarEnsureParentDirs(const wchar_t* path) {
-    wchar_t buf[MAX_PATH];
-    wcsncpy(buf, path, _countof(buf));
-    wchar_t* p = buf;
-    while (*p) {
-        if (*p == L'/' || *p == L'\\') {
-            *p = L'\0';
-            if (buf[0] != L'\0' && wcscmp(buf, L".") != 0 && wcscmp(buf, L"..") != 0 && !(buf[1] == L':' && buf[2] == L'\0')) {
-                CreateDirectoryW(buf, NULL);
-            }
-            *p = L'\\';
-        }
-        p++;
-    }
 }
 
 static void TarWriteFile(const wchar_t* full_path, const wchar_t* arc_name, FILE* afp, bool verbose) {
@@ -40008,11 +40108,20 @@ bool Builtin_Tar(IShell* shell, CommandAST* cmd, int* code) {
     while (fread(&hdr, 1, sizeof(hdr), rfp) == sizeof(hdr)) {
         if (hdr.name[0] == '\0') break;
 
-        wchar_t wname[MAX_PATH];
-        mbstowcs(wname, hdr.name, sizeof(wname) / sizeof(wname[0]) - 1);
+        char name_buf[101] = {0};
+        memcpy(name_buf, hdr.name, sizeof(hdr.name));
+        name_buf[sizeof(hdr.name)] = '\0';
 
+        wchar_t wname[MAX_PATH] = {0};
+        size_t conv = mbstowcs(wname, name_buf, _countof(wname) - 1);
+        if (conv == (size_t)-1) conv = 0;
+        wname[conv < _countof(wname) ? conv : _countof(wname) - 1] = L'\0';
+
+        char size_buf[13] = {0};
+        memcpy(size_buf, hdr.size, sizeof(hdr.size));
+        size_buf[sizeof(hdr.size)] = '\0';
         unsigned __int64 fsize = 0;
-        sscanf(hdr.size, "%llo", &fsize);
+        sscanf_s(size_buf, "%llo", &fsize);
 
         bool matched = true;
         if (arg_start < cmd->argc) {
@@ -40023,8 +40132,13 @@ bool Builtin_Tar(IShell* shell, CommandAST* cmd, int* code) {
         }
 
         if (mode_x && matched) {
-            if (keep_existing && GetFileAttributesW(wname) != INVALID_FILE_ATTRIBUTES) {
-                /* skip */
+            if (!TarIsPathSafe(wname)) {
+                fwprintf(stderr, L"tar: skipping unsafe path: %ls\n", wname);
+                unsigned __int64 blocks = (fsize + 511) / 512;
+                _fseeki64(rfp, blocks * 512, SEEK_CUR);
+            } else if (keep_existing && GetFileAttributesW(wname) != INVALID_FILE_ATTRIBUTES) {
+                unsigned __int64 blocks = (fsize + 511) / 512;
+                _fseeki64(rfp, blocks * 512, SEEK_CUR);
             } else {
                 TarEnsureParentDirs(wname);
                 FILE* out = _wfsopen(wname, L"wb", _SH_DENYWR);
@@ -40139,8 +40253,7 @@ static void* FetchNetTable(bool tcp, ULONG af, int cls) {
 static bool MatchPort(DWORD port, const wchar_t* port_filter) {
     if (!port_filter || !*port_filter) return true;
     wchar_t buf[256];
-    wcsncpy(buf, port_filter, 255);
-    buf[255] = L'\0';
+    wcsncpy_s(buf, _countof(buf), port_filter, _TRUNCATE);
     wchar_t* ctx = NULL;
     wchar_t* tok = wcstok(buf, L",", &ctx);
     while (tok) {
@@ -41477,9 +41590,9 @@ bool Builtin_Fstat(CommandAST* cmd, int* code) {
 
     if (file_count > 0) {
         for (int f = 0; f < file_count; f++) {
-            wchar_t fullPath[MAX_PATH];
+            wchar_t fullPath[MAX_PATH] = {0};
             if (!GetFullPathNameW(files[f], MAX_PATH, fullPath, NULL)) {
-                wcsncpy(fullPath, files[f], MAX_PATH - 1);
+                wcsncpy_s(fullPath, _countof(fullPath), files[f], _TRUNCATE);
             }
 
             DWORD sessionHandle = 0;
@@ -41527,7 +41640,7 @@ bool Builtin_Fstat(CommandAST* cmd, int* code) {
                                 wchar_t proc[64], user[64];
                                 FstatGetProcessInfo(pid, proc, 64, user, 64);
                                 if (procInfo[i].strAppName[0] && wcscmp(proc, L"?") == 0) {
-                                    wcsncpy(proc, procInfo[i].strAppName, 63);
+                                    wcsncpy_s(proc, _countof(proc), procInfo[i].strAppName, _TRUNCATE);
                                 }
                                 if (opt_p && opt_p != pid) continue;
                                 if (opt_u && wcsstr(user, opt_u) == NULL) continue;
@@ -41962,7 +42075,7 @@ bool Builtin_Iostat(CommandAST* cmd, int* code) {
             if (wait_sec == 1 && count == 1) wait_sec = (int)wcstol(arg, NULL, 10);
             else count = (int)wcstol(arg, NULL, 10);
         } else if (drive_count < 8 && wcslen(arg) <= 3) {
-            wcsncpy(drives[drive_count++], arg, 7);
+            wcsncpy_s(drives[drive_count++], _countof(drives[0]), arg, _TRUNCATE);
         }
     }
 

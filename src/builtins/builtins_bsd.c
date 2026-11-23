@@ -140,7 +140,12 @@ static void FormatParagraph(wchar_t** lines, size_t line_count, const FmtConfig*
                 word[wlen] = L'\0';
                 if (wcount >= cap) {
                     cap *= 2;
-                    words = (wchar_t**)realloc(words, cap * sizeof(wchar_t*));
+                    wchar_t** new_words = (wchar_t**)realloc(words, cap * sizeof(wchar_t*));
+                    if (!new_words) {
+                        free(word);
+                        break;
+                    }
+                    words = new_words;
                 }
                 words[wcount++] = word;
             }
@@ -211,9 +216,16 @@ static void ProcessFmtStream(FILE* fp, const FmtConfig* cfg) {
 
         if (count >= cap) {
             cap *= 2;
-            para = (wchar_t**)realloc(para, cap * sizeof(wchar_t*));
+            wchar_t** new_para = (wchar_t**)realloc(para, cap * sizeof(wchar_t*));
+            if (!new_para) {
+                break;
+            }
+            para = new_para;
         }
-        para[count++] = _wcsdup(line);
+        wchar_t* dup = _wcsdup(line);
+        if (dup) {
+            para[count++] = dup;
+        }
     }
 
     if (count > 0) {
@@ -315,7 +327,9 @@ typedef struct {
 
 static bool CsplitWriteSection(CsplitWriter* cw, size_t from, size_t to) {
     wchar_t out_name[MAX_PATH];
-    swprintf(out_name, sizeof(out_name) / sizeof(out_name[0]), L"%ls%0*d", cw->prefix, cw->digits, cw->file_num++);
+    if (swprintf_s(out_name, _countof(out_name), L"%ls%0*d", cw->prefix, cw->digits, cw->file_num++) < 0) {
+        return false;
+    }
     FILE* out = _wfsopen(out_name, L"w", _SH_DENYWR);
     if (!out) return false;
 
@@ -367,9 +381,11 @@ bool Builtin_Csplit(CommandAST* cmd, int* code) {
         } else if (wcscmp(opt, L"-n") == 0 && arg_idx + 1 < cmd->argc) {
             digits = (int)wcstol(cmd->argv[++arg_idx], NULL, 10);
             if (digits < 1) digits = 2;
+            if (digits > 16) digits = 16;
         } else if (wcsncmp(opt, L"-n", 2) == 0) {
             digits = (int)wcstol(opt + 2, NULL, 10);
             if (digits < 1) digits = 2;
+            if (digits > 16) digits = 16;
         } else {
             break;
         }
@@ -393,13 +409,25 @@ bool Builtin_Csplit(CommandAST* cmd, int* code) {
     /* Read all lines */
     size_t cap = 512, total_lines = 0;
     wchar_t** lines = (wchar_t**)malloc(cap * sizeof(wchar_t*));
+    if (!lines) {
+        if (fp != stdin) fclose(fp);
+        *code = 1;
+        return true;
+    }
     wchar_t buf[8192];
     while (fgetws(buf, sizeof(buf) / sizeof(buf[0]), fp)) {
         if (total_lines >= cap) {
             cap *= 2;
-            lines = (wchar_t**)realloc(lines, cap * sizeof(wchar_t*));
+            wchar_t** new_lines = (wchar_t**)realloc(lines, cap * sizeof(wchar_t*));
+            if (!new_lines) {
+                break;
+            }
+            lines = new_lines;
         }
-        lines[total_lines++] = _wcsdup(buf);
+        wchar_t* dup = _wcsdup(buf);
+        if (dup) {
+            lines[total_lines++] = dup;
+        }
     }
     if (fp != stdin) fclose(fp);
 
@@ -453,7 +481,8 @@ bool Builtin_Csplit(CommandAST* cmd, int* code) {
                 if (!end_delim) { error_occurred = true; break; }
 
                 size_t re_len = end_delim - (pat + 1);
-                wchar_t re_str[512];
+                wchar_t* re_str = (wchar_t*)malloc((re_len + 1) * sizeof(wchar_t));
+                if (!re_str) { error_occurred = true; break; }
                 wcsncpy(re_str, pat + 1, re_len);
                 re_str[re_len] = L'\0';
 
@@ -470,6 +499,7 @@ bool Builtin_Csplit(CommandAST* cmd, int* code) {
                         break;
                     }
                 }
+                free(re_str);
 
                 if (match_line == total_lines) {
                     if (repeat_inf) break;
@@ -616,7 +646,7 @@ bool Builtin_Chmod(CommandAST* cmd, int* code) {
         ctx.octal_mode = (int)wcstol(mode_str, NULL, 8);
     } else {
         ctx.is_octal = false;
-        wcsncpy(ctx.symbolic_mode, mode_str, 63);
+        wcsncpy_s(ctx.symbolic_mode, _countof(ctx.symbolic_mode), mode_str, _TRUNCATE);
     }
 
     for (int i = arg_idx; i < cmd->argc; i++) {
@@ -753,9 +783,9 @@ bool Builtin_Chown(CommandAST* cmd, int* code) {
 
     if (colon) {
         *colon = L'\0';
-        wcsncpy(ctx.group_name, colon + 1, 127);
+        wcsncpy_s(ctx.group_name, _countof(ctx.group_name), colon + 1, _TRUNCATE);
     }
-    wcsncpy(ctx.owner_name, user_buf, 127);
+    wcsncpy_s(ctx.owner_name, _countof(ctx.owner_name), user_buf, _TRUNCATE);
 
     BYTE sidBufferOwner[SECURITY_MAX_SID_SIZE];
     BYTE sidBufferGroup[SECURITY_MAX_SID_SIZE];
@@ -1103,7 +1133,15 @@ bool Builtin_Rs(CommandAST* cmd, int* code) {
                 if (item) {
                     wcsncpy(item, start, wlen);
                     item[wlen] = L'\0';
-                    if (count >= cap) { cap *= 2; items = (wchar_t**)realloc(items, cap * sizeof(wchar_t*)); }
+                    if (count >= cap) {
+                        cap *= 2;
+                        wchar_t** new_items = (wchar_t**)realloc(items, cap * sizeof(wchar_t*));
+                        if (!new_items) {
+                            free(item);
+                            break;
+                        }
+                        items = new_items;
+                    }
                     items[count++] = item;
                 }
             }
@@ -1134,6 +1172,9 @@ bool Builtin_Rs(CommandAST* cmd, int* code) {
         rows = (int)((count + cols - 1) / cols);
     }
 
+    if (cols < 1) cols = 1;
+    if (rows < 1) rows = 1;
+
     if (transpose) {
         int tmp = rows;
         rows = cols;
@@ -1142,6 +1183,12 @@ bool Builtin_Rs(CommandAST* cmd, int* code) {
 
     /* Compute column widths */
     int* col_widths = (int*)calloc(cols, sizeof(int));
+    if (!col_widths) {
+        for (size_t i = 0; i < count; i++) free(items[i]);
+        free(items);
+        *code = 1;
+        return true;
+    }
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
             size_t idx = transpose ? (size_t)(c * rows + r) : (size_t)(r * cols + c);

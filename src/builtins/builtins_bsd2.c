@@ -135,11 +135,12 @@ static int TsortFindOrAdd(TsortGraph* g, const wchar_t* name) {
     }
     if (g->count >= g->cap) {
         g->cap = (g->cap == 0) ? 64 : g->cap * 2;
-        g->nodes = (TsortNode*)realloc(g->nodes, g->cap * sizeof(TsortNode));
+        TsortNode* new_nodes = (TsortNode*)realloc(g->nodes, g->cap * sizeof(TsortNode));
+        if (!new_nodes) return -1;
+        g->nodes = new_nodes;
     }
     int idx = g->count++;
-    wcsncpy(g->nodes[idx].name, name, 255);
-    g->nodes[idx].name[255] = L'\0';
+    wcsncpy_s(g->nodes[idx].name, _countof(g->nodes[idx].name), name, _TRUNCATE);
     g->nodes[idx].in_degree = 0;
     g->nodes[idx].successors = NULL;
     g->nodes[idx].succ_count = 0;
@@ -148,14 +149,16 @@ static int TsortFindOrAdd(TsortGraph* g, const wchar_t* name) {
 }
 
 static void TsortAddEdge(TsortGraph* g, int from, int to) {
-    if (from == to) return;
+    if (from < 0 || to < 0 || from == to) return;
     TsortNode* fn = &g->nodes[from];
     for (int i = 0; i < fn->succ_count; i++) {
         if (fn->successors[i] == to) return;
     }
     if (fn->succ_count >= fn->succ_cap) {
         fn->succ_cap = (fn->succ_cap == 0) ? 8 : fn->succ_cap * 2;
-        fn->successors = (int*)realloc(fn->successors, fn->succ_cap * sizeof(int));
+        int* new_succ = (int*)realloc(fn->successors, fn->succ_cap * sizeof(int));
+        if (!new_succ) return;
+        fn->successors = new_succ;
     }
     fn->successors[fn->succ_count++] = to;
     g->nodes[to].in_degree++;
@@ -526,7 +529,7 @@ bool Builtin_Patch(CommandAST* cmd, int* code) {
             wchar_t* nl = wcschr(plines[i] + 4, L'\n');
             if (nl) *nl = L'\0';
             orig_file = StripPath(plines[i] + 4, p_strip);
-            wcsncpy(detected_file, orig_file, MAX_PATH - 1);
+            wcsncpy_s(detected_file, _countof(detected_file), orig_file, _TRUNCATE);
             orig_file = detected_file;
             break;
         }
@@ -693,6 +696,43 @@ static void FormatOctal(char* dst, size_t size, unsigned __int64 val) {
 static bool MatchPattern(const wchar_t* pat, const wchar_t* str) {
     if (!pat || !*pat || wcscmp(pat, L"*") == 0) return true;
     return wcsstr(str, pat) != NULL;
+}
+
+static bool TarIsPathSafe(const wchar_t* path) {
+    if (!path || !*path) return false;
+    /* Reject absolute paths: leading slash or backslash */
+    if (path[0] == L'/' || path[0] == L'\\') return false;
+    /* Reject drive letters: C: etc */
+    if (((path[0] >= L'a' && path[0] <= L'z') || (path[0] >= L'A' && path[0] <= L'Z')) && path[1] == L':') return false;
+    /* Reject directory traversal with .. */
+    const wchar_t* p = path;
+    while (*p) {
+        if (p[0] == L'.' && p[1] == L'.') {
+            if (p == path || p[-1] == L'/' || p[-1] == L'\\') {
+                if (p[2] == L'\0' || p[2] == L'/' || p[2] == L'\\') {
+                    return false;
+                }
+            }
+        }
+        p++;
+    }
+    return true;
+}
+
+static void TarEnsureParentDirs(const wchar_t* path) {
+    wchar_t buf[MAX_PATH];
+    wcsncpy_s(buf, _countof(buf), path, _TRUNCATE);
+    wchar_t* p = buf;
+    while (*p) {
+        if (*p == L'/' || *p == L'\\') {
+            *p = L'\0';
+            if (buf[0] != L'\0' && wcscmp(buf, L".") != 0 && wcscmp(buf, L"..") != 0 && !(buf[1] == L':' && buf[2] == L'\0')) {
+                CreateDirectoryW(buf, NULL);
+            }
+            *p = L'\\';
+        }
+        p++;
+    }
 }
 
 static void PaxCopyTree(const wchar_t* src, const wchar_t* dst, bool verbose, bool newer_only) {
@@ -886,11 +926,20 @@ bool Builtin_Pax(IShell* shell, CommandAST* cmd, int* code) {
     while (fread(&hdr, 1, sizeof(hdr), rfp) == sizeof(hdr)) {
         if (hdr.name[0] == '\0') break;
 
-        wchar_t wname[MAX_PATH];
-        mbstowcs(wname, hdr.name, sizeof(wname) / sizeof(wname[0]) - 1);
+        char name_buf[101] = {0};
+        memcpy(name_buf, hdr.name, sizeof(hdr.name));
+        name_buf[sizeof(hdr.name)] = '\0';
 
+        wchar_t wname[MAX_PATH] = {0};
+        size_t conv = mbstowcs(wname, name_buf, _countof(wname) - 1);
+        if (conv == (size_t)-1) conv = 0;
+        wname[conv < _countof(wname) ? conv : _countof(wname) - 1] = L'\0';
+
+        char size_buf[13] = {0};
+        memcpy(size_buf, hdr.size, sizeof(hdr.size));
+        size_buf[sizeof(hdr.size)] = '\0';
         unsigned __int64 fsize = 0;
-        sscanf(hdr.size, "%llo", &fsize);
+        sscanf_s(size_buf, "%llo", &fsize);
 
         bool matched = true;
         if (arg_start < cmd->argc) {
@@ -902,9 +951,15 @@ bool Builtin_Pax(IShell* shell, CommandAST* cmd, int* code) {
 
         if (mode_r && matched) {
             /* Extraction mode */
-            if (keep_existing && GetFileAttributesW(wname) != INVALID_FILE_ATTRIBUTES) {
-                /* skip */
+            if (!TarIsPathSafe(wname)) {
+                fwprintf(stderr, L"pax: skipping unsafe path: %ls\n", wname);
+                unsigned __int64 blocks = (fsize + 511) / 512;
+                _fseeki64(rfp, blocks * 512, SEEK_CUR);
+            } else if (keep_existing && GetFileAttributesW(wname) != INVALID_FILE_ATTRIBUTES) {
+                unsigned __int64 blocks = (fsize + 511) / 512;
+                _fseeki64(rfp, blocks * 512, SEEK_CUR);
             } else {
+                TarEnsureParentDirs(wname);
                 FILE* out = _wfsopen(wname, L"wb", _SH_DENYWR);
                 unsigned __int64 rem = fsize;
                 char buf[512];
@@ -930,22 +985,6 @@ bool Builtin_Pax(IShell* shell, CommandAST* cmd, int* code) {
     if (rfp != stdin) fclose(rfp);
     *code = 0;
     return true;
-}
-
-static void TarEnsureParentDirs(const wchar_t* path) {
-    wchar_t buf[MAX_PATH];
-    wcsncpy(buf, path, _countof(buf));
-    wchar_t* p = buf;
-    while (*p) {
-        if (*p == L'/' || *p == L'\\') {
-            *p = L'\0';
-            if (buf[0] != L'\0' && wcscmp(buf, L".") != 0 && wcscmp(buf, L"..") != 0 && !(buf[1] == L':' && buf[2] == L'\0')) {
-                CreateDirectoryW(buf, NULL);
-            }
-            *p = L'\\';
-        }
-        p++;
-    }
 }
 
 static void TarWriteFile(const wchar_t* full_path, const wchar_t* arc_name, FILE* afp, bool verbose) {
@@ -1165,11 +1204,20 @@ bool Builtin_Tar(IShell* shell, CommandAST* cmd, int* code) {
     while (fread(&hdr, 1, sizeof(hdr), rfp) == sizeof(hdr)) {
         if (hdr.name[0] == '\0') break;
 
-        wchar_t wname[MAX_PATH];
-        mbstowcs(wname, hdr.name, sizeof(wname) / sizeof(wname[0]) - 1);
+        char name_buf[101] = {0};
+        memcpy(name_buf, hdr.name, sizeof(hdr.name));
+        name_buf[sizeof(hdr.name)] = '\0';
 
+        wchar_t wname[MAX_PATH] = {0};
+        size_t conv = mbstowcs(wname, name_buf, _countof(wname) - 1);
+        if (conv == (size_t)-1) conv = 0;
+        wname[conv < _countof(wname) ? conv : _countof(wname) - 1] = L'\0';
+
+        char size_buf[13] = {0};
+        memcpy(size_buf, hdr.size, sizeof(hdr.size));
+        size_buf[sizeof(hdr.size)] = '\0';
         unsigned __int64 fsize = 0;
-        sscanf(hdr.size, "%llo", &fsize);
+        sscanf_s(size_buf, "%llo", &fsize);
 
         bool matched = true;
         if (arg_start < cmd->argc) {
@@ -1180,8 +1228,13 @@ bool Builtin_Tar(IShell* shell, CommandAST* cmd, int* code) {
         }
 
         if (mode_x && matched) {
-            if (keep_existing && GetFileAttributesW(wname) != INVALID_FILE_ATTRIBUTES) {
-                /* skip */
+            if (!TarIsPathSafe(wname)) {
+                fwprintf(stderr, L"tar: skipping unsafe path: %ls\n", wname);
+                unsigned __int64 blocks = (fsize + 511) / 512;
+                _fseeki64(rfp, blocks * 512, SEEK_CUR);
+            } else if (keep_existing && GetFileAttributesW(wname) != INVALID_FILE_ATTRIBUTES) {
+                unsigned __int64 blocks = (fsize + 511) / 512;
+                _fseeki64(rfp, blocks * 512, SEEK_CUR);
             } else {
                 TarEnsureParentDirs(wname);
                 FILE* out = _wfsopen(wname, L"wb", _SH_DENYWR);

@@ -134,8 +134,9 @@ static void DiffFreeLines(wchar_t** lines, size_t count) {
 static DiffEdit* DiffBuildEdits(wchar_t* const* lines1, size_t count1,
                                 wchar_t* const* lines2, size_t count2,
                                 const DiffOpts* opts, size_t* out_nedits) {
-    size_t matrix_size = (count1 + 1) * (count2 + 1);
-    int* dp = (matrix_size > 0 && matrix_size <= 4000000) ? (int*)malloc(matrix_size * sizeof(int)) : NULL;
+    bool can_dp = (count1 <= 2000 && count2 <= 2000);
+    size_t matrix_size = can_dp ? (count1 + 1) * (count2 + 1) : 0;
+    int* dp = can_dp ? (int*)malloc(matrix_size * sizeof(int)) : NULL;
 
     size_t cap = count1 + count2 + 16;
     size_t nedits = 0;
@@ -163,7 +164,14 @@ static DiffEdit* DiffBuildEdits(wchar_t* const* lines1, size_t count1,
         while (i < count1 || j < count2) {
             if (nedits + 2 >= cap) {
                 cap *= 2;
-                edits = (DiffEdit*)realloc(edits, cap * sizeof(DiffEdit));
+                DiffEdit* new_edits = (DiffEdit*)realloc(edits, cap * sizeof(DiffEdit));
+                if (!new_edits) {
+                    free(dp);
+                    free(edits);
+                    *out_nedits = 0;
+                    return NULL;
+                }
+                edits = new_edits;
             }
             if (i < count1 && j < count2) {
                 if (DiffLinesMatch(lines1[i], lines2[j], opts)) {
@@ -216,7 +224,13 @@ static DiffEdit* DiffBuildEdits(wchar_t* const* lines1, size_t count1,
         while (i < count1 || j < count2) {
             if (nedits + 4 >= cap) {
                 cap *= 2;
-                edits = (DiffEdit*)realloc(edits, cap * sizeof(DiffEdit));
+                DiffEdit* new_edits = (DiffEdit*)realloc(edits, cap * sizeof(DiffEdit));
+                if (!new_edits) {
+                    free(edits);
+                    *out_nedits = 0;
+                    return NULL;
+                }
+                edits = new_edits;
             }
             if (i < count1 && j < count2) {
                 if (DiffLinesMatch(lines1[i], lines2[j], opts)) {

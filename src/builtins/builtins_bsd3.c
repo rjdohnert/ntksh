@@ -84,8 +84,7 @@ static void* FetchNetTable(bool tcp, ULONG af, int cls) {
 static bool MatchPort(DWORD port, const wchar_t* port_filter) {
     if (!port_filter || !*port_filter) return true;
     wchar_t buf[256];
-    wcsncpy(buf, port_filter, 255);
-    buf[255] = L'\0';
+    wcsncpy_s(buf, _countof(buf), port_filter, _TRUNCATE);
     wchar_t* ctx = NULL;
     wchar_t* tok = wcstok(buf, L",", &ctx);
     while (tok) {

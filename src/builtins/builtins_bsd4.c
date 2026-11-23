@@ -118,9 +118,9 @@ bool Builtin_Fstat(CommandAST* cmd, int* code) {
 
     if (file_count > 0) {
         for (int f = 0; f < file_count; f++) {
-            wchar_t fullPath[MAX_PATH];
+            wchar_t fullPath[MAX_PATH] = {0};
             if (!GetFullPathNameW(files[f], MAX_PATH, fullPath, NULL)) {
-                wcsncpy(fullPath, files[f], MAX_PATH - 1);
+                wcsncpy_s(fullPath, _countof(fullPath), files[f], _TRUNCATE);
             }
 
             DWORD sessionHandle = 0;
@@ -168,7 +168,7 @@ bool Builtin_Fstat(CommandAST* cmd, int* code) {
                                 wchar_t proc[64], user[64];
                                 FstatGetProcessInfo(pid, proc, 64, user, 64);
                                 if (procInfo[i].strAppName[0] && wcscmp(proc, L"?") == 0) {
-                                    wcsncpy(proc, procInfo[i].strAppName, 63);
+                                    wcsncpy_s(proc, _countof(proc), procInfo[i].strAppName, _TRUNCATE);
                                 }
                                 if (opt_p && opt_p != pid) continue;
                                 if (opt_u && wcsstr(user, opt_u) == NULL) continue;
@@ -603,7 +603,7 @@ bool Builtin_Iostat(CommandAST* cmd, int* code) {
             if (wait_sec == 1 && count == 1) wait_sec = (int)wcstol(arg, NULL, 10);
             else count = (int)wcstol(arg, NULL, 10);
         } else if (drive_count < 8 && wcslen(arg) <= 3) {
-            wcsncpy(drives[drive_count++], arg, 7);
+            wcsncpy_s(drives[drive_count++], _countof(drives[0]), arg, _TRUNCATE);
         }
     }
 
