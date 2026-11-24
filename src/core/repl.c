@@ -105,6 +105,16 @@ static void ConsoleFullRedraw(HANDLE hOut, COORD start_pos, const wchar_t* line,
 }
 
 bool Shell_IsAdmin(void) {
+    HANDLE hToken = NULL;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
+        TOKEN_ELEVATION elevation;
+        DWORD cbSize = sizeof(TOKEN_ELEVATION);
+        if (GetTokenInformation(hToken, TokenElevation, &elevation, sizeof(elevation), &cbSize)) {
+            CloseHandle(hToken);
+            return elevation.TokenIsElevated != 0;
+        }
+        CloseHandle(hToken);
+    }
     BOOL isAdmin = FALSE;
     PSID adminGroup = NULL;
     SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
@@ -150,6 +160,9 @@ static void PrintPrompt(IShell* self) {
         }
         const wchar_t* ps1 = self->env->Get(self->env, L"PS1");
         if (ps1 && *ps1) {
+            if (Shell_IsAdmin() && (wcscmp(ps1, L"$ ") == 0 || wcscmp(ps1, L"$") == 0)) {
+                ps1 = L"# ";
+            }
             wchar_t* expandedPs1 = self->env->Expand(self->env, ps1);
             if (expandedPs1) {
                 wprintf(L"%ls", expandedPs1);

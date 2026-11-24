@@ -42,7 +42,7 @@ foreach ($target in @((Join-Path $binDir 'ksh.exe'), (Join-Path $rootDir 'ksh.ex
 }
 
 $outputExe = Join-Path $binDir 'ksh.exe'
-$libs = @('-ladvapi32', '-lshell32', '-luser32', '-lpsapi', '-liphlpapi', '-lws2_32', '-lsetupapi', '-lcfgmgr32', '-lrstrtmgr', '-lwinhttp')
+$libs = @('-L"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\um\x64"', '-L"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\ucrt\x64"', '-ladvapi32', '-lshell32', '-luser32', '-lpsapi', '-liphlpapi', '-lws2_32', '-lsetupapi', '-lcfgmgr32', '-lrstrtmgr', '-lwinhttp')
 
 # Enterprise Exploit Mitigations
 $secFlags = @(

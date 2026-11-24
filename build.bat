@@ -13,7 +13,7 @@ if exist "%ROOT%ksh.old" del /f /q "%ROOT%ksh.old" 2>nul
 if exist "%ROOT%ksh.exe" ren "%ROOT%ksh.exe" "ksh.old" 2>nul
 
 set CFLAGS=-O2 -Wall -Wextra -fms-extensions -municode -I"%ROOT%include"
-set LIBS=-ladvapi32 -lshell32 -luser32 -lpsapi -liphlpapi -lws2_32 -lsetupapi -lcfgmgr32 -lrstrtmgr -lwinhttp
+set LIBS=-L"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\um\x64" -L"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\ucrt\x64" -ladvapi32 -lshell32 -luser32 -lpsapi -liphlpapi -lws2_32 -lsetupapi -lcfgmgr32 -lrstrtmgr -lwinhttp
 
 if /i "%1"=="amalgamate" goto build_amalgamate
 if /i "%1"=="/amalgamate" goto build_amalgamate

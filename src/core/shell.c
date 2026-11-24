@@ -2786,7 +2786,11 @@ static void Shell_ParseIniLine(IShell* shell, wchar_t* line, wchar_t* currentSec
             (wcscmp(currentSection, L"prompt") == 0 &&
              (_wcsicmp(rawKey, L"format") == 0 || _wcsicmp(rawKey, L"value") == 0 ||
               _wcsicmp(rawKey, L"string") == 0))) {
-            shell->env->Set(shell->env, L"PS1", rawVal);
+            if (Shell_IsAdmin() && (wcscmp(rawVal, L"$ ") == 0 || wcscmp(rawVal, L"$") == 0)) {
+                shell->env->Set(shell->env, L"PS1", L"# ");
+            } else {
+                shell->env->Set(shell->env, L"PS1", rawVal);
+            }
             return;
         }
 
@@ -2889,8 +2893,14 @@ void Shell_LoadKshIni(IShell* shell) {
                     L";   \\h - Hostname\n"
                     L";   \\w - Full current working directory\n"
                     L";   \\W - Basename of current working directory\n"
-                    L";   \\$ - '$' (or '#' if running as Administrator)\n"
-                    L"prompt = \"$ \"\n\n"
+                    L";   \\$ - '$' (or '#' if running as Administrator)\n",
+                    fp
+                );
+                fputws(
+                    Shell_IsAdmin() ? L"prompt = \"# \"\n\n" : L"prompt = \"$ \"\n\n",
+                    fp
+                );
+                fputws(
                     L"[aliases]\n"
                     L"; Common command aliases\n"
                     L"ll = ls -la\n"
@@ -3062,7 +3072,8 @@ IShell* CreateShell(void) {
     /* Initialize environment */
     if (!shell->env->Set(shell->env, L"SHELL", L"ksh") ||
         !shell->env->Set(shell->env, L"KSH_VERSION", NTKSH_VERSION) ||
-        !shell->env->Set(shell->env, L".sh.version", NTKSH_VERSION)) {
+        !shell->env->Set(shell->env, L".sh.version", NTKSH_VERSION) ||
+        !shell->env->Set(shell->env, L"PS1", Shell_IsAdmin() ? L"# " : L"$ ")) {
         shell->Destroy(shell);
         return NULL;
     }

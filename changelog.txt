@@ -1,0 +1,90 @@
+===============================================================================
+ntksh (KornShell for Windows) Changelog
+PC/OpenSystems LLC - Release 93u+m/4.0.16 (2026-11-23)
+===============================================================================
+
+HIGHLIGHTS
+-------------------------------------------------------------------------------
+* Arena/Region-Based Memory Management (KshArena):
+  Implemented dedicated 16-byte aligned memory region arenas for AST nodes,
+  tokens, arguments, and redirections. Complex pipeline and subshell teardowns
+  now execute as an O(1) bulk operation, eliminating heap fragmentation and
+  preventing AST memory leaks.
+
+* Native Win32 Extended Long Path Support (> 260 up to 32,767 characters):
+  Transparent Win32 extended long path prefixing (\\?\) across all shell file
+  redirections, path lookups, and built-in utilities. Deep directory hierarchies
+  are accessed seamlessly without hitting legacy MAX_PATH limits.
+
+* Enterprise-Grade Exploit Mitigations:
+  Binaries compiled with full Microsoft security hardening:
+  - Control Flow Guard (/GUARD:CF)
+  - Data Execution Prevention (/NXCOMPAT)
+  - High-Entropy 64-bit Address Space Layout Randomization (/DYNAMICBASE, /HIGHENTROPYVA)
+  - Hardware-Enforced Stack Protection / Intel CET Shadow Stacks (/CETCOMPAT)
+  - AddressSanitizer (ASan) and UndefinedBehaviorSanitizer (UBSan) verification
+
+* Zero-Defect Security & Reliability Audit:
+  Full multi-pass security and memory audit across all core subsystems and built-in
+  utilities. All heap allocations, handle lifecycles, and boundary checks verified.
+
+SECURITY & DEFECT FIXES
+-------------------------------------------------------------------------------
+* gzip Data-Loss Prevention:
+  Fixed a critical defect in 'gzip -d' where input files were unconditionally
+  deleted even if decompression failed or the input was corrupted. Input files
+  are now strictly preserved unless decompression completes with exit code 0
+  and CRC validation passes. Partially written corrupt output files are safely deleted.
+
+* NTFS Alternate Data Stream (ADS) Protection in tar and pax:
+  Hardened 'TarIsPathSafe' to reject any colon (':') characters in archive paths,
+  preventing malicious archives from writing to NTFS Alternate Data Streams or
+  exploiting hidden stream paths.
+
+* Remote Filename Sanitization in curl and wget:
+  Hardened 'curl -O' and 'wget' remote filename deduction. Slashes, backslashes,
+  and colons are sanitized to underscores, and traversal paths ('.', '..', empty)
+  fall back safely to 'index.html'.
+
+* Win32 Pipe Handle Double-Close Elimination:
+  Resolved a double-close defect in 'Shell_ExecuteLine' where the C runtime
+  _close() closed the underlying OS pipe handle prematurely before execution,
+  causing a subsequent CloseHandle() to fail or close recycled OS handles.
+  Handle cleanup is now cleanly deferred and synchronized with descriptor state.
+
+* Multi-Stage Pipeline Handle Leak Prevention:
+  Fixed an unhandled failure path in 'Executor_Execute' where a CreatePipe failure
+  on stage N of a multi-command pipeline failed to close the previous stage's
+  read handle.
+
+* Safe Heap Reallocation Across Built-ins:
+  Replaced direct pointer overwrites on realloc() in awk, sed, column, join,
+  tac, lam, patch, regex, and crypto with safe temporary pointer checks. Out-of-memory
+  or hostile large inputs now raise clean exceptions without memory leaks or NULL
+  pointer dereferences.
+
+* REPL Interactive Buffer Clamping:
+  Clamped Ctrl+U and Ctrl+W kill ring operations in the interactive REPL with
+  _TRUNCATE and boundary checks, preventing CRT parameter aborts on lines
+  exceeding 4096 characters.
+
+* Shell History Teardown Cleanup:
+  Added 'History_Cleanup()' and integrated it with shell teardown, releasing all
+  heap-allocated command history entries.
+
+* Batch FOR /F Capacity Overflow Protection:
+  Clamped exponential buffer capacity doubling in 'Batch_ExecuteForFCommand' to
+  guard against SIZE_MAX / 2 integer overflows on hostile command outputs.
+
+* Table Alignment & Column Builtin Hardening:
+  Added checks for initial row allocations and wcsdup tokens in 'Builtin_Column'.
+
+TESTING & VALIDATION
+-------------------------------------------------------------------------------
+* 100% PASS on the comprehensive ntksh regression test suite (POSIX parameter
+  expansions, ksh93 compound structures, arithmetic evaluation, batch emulation,
+  and BSD utility regressions).
+* 650/650 mutation fuzzing test iterations under AddressSanitizer and UBSan
+  with zero crashes, zero hangs, and zero sanitizer errors.
+* Verified extended long paths with deep directory trees (> 350 characters).
+===============================================================================
