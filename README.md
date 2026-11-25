@@ -159,9 +159,20 @@ e:\ksh\
 │   ├── sign.ps1               # Authenticode SHA-256 code-signing script
 │   └── fuzz_test.ps1          # Adversarial fuzzing harness (ASan/UBSan)
 ├── build.ps1                  # Master automated build script
+├── architecture_and_developer_guide.md # Comprehensive Architecture & Developer Guide
+├── user_guide.md              # End-user and scripting manual
+├── command_reference.md       # Complete built-in command reference
 ├── LICENSE                    # BSD 3-Clause License
 └── README.md                  # Project documentation
 ```
+
+---
+
+## Documentation
+
+- **[User & Scripting Guide](user_guide.md)**: Comprehensive user manual, POSIX & KornShell syntax, Windows Batch runtime, cookbook recipes, and migration guide.
+- **[Command Reference](command_reference.md)**: Complete parameter and flag documentation for all 100+ embedded coreutils and built-ins.
+- **[Architecture & Developer Guide](architecture_and_developer_guide.md)**: In-depth internals, memory arena management, AST parser, Win32 execution engine, C extension ABI (`ksh/module.h`), and contributor instructions.
 
 ---
 
